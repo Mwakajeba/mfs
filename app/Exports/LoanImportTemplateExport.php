@@ -2,7 +2,7 @@
 
 namespace App\Exports;
 
-use App\Models\Customer;
+use App\Models\User;
 use Carbon\Carbon;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
@@ -21,51 +21,31 @@ class LoanImportTemplateExport implements FromArray, WithHeadings, WithStyles, W
 {
     public function array(): array
     {
-        $data = [];
         $branchId = auth()->user()->branch_id ?? null;
-        $customers = Customer::with(['groups:id'])
-            ->where('category', 'Borrower')
-            ->when($branchId, function($query) use ($branchId) {
-                $query->where('branch_id', $branchId);
-            })
-            ->limit(50)
-            ->get(['id', 'name', 'customerNo', 'branch_id']);
+        $sampleOfficer = User::query()
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->orderBy('name')
+            ->value('name') ?? '';
 
-        // Generate sample loan data
-        $sectors = ['Agriculture', 'Business', 'Trade', 'Services', 'Manufacturing', 'Education', 'Health', 'Transport'];
-        $interestCycles = ['monthly', 'weekly', 'daily', 'quarterly', 'yearly'];
-        
-        foreach ($customers as $index => $customer) {
-            $groupId = optional($customer->groups->first())->id ?? '';
-            $data[] = [
-                $customer->name,
-                $customer->customerNo,
-                rand(100000, 5000000), // amount
-                rand(3, 24), // period
-                rand(5, 15) + (rand(0, 9) / 10), // interest (5.0 to 15.9)
-                Carbon::now()->subDays(rand(0, 30))->format('Y-m-d'), // date_applied
-                $interestCycles[array_rand($interestCycles)], // interest_cycle
-                '', // loan_officer_id (will be filled by user)
-                $groupId,
-                $sectors[array_rand($sectors)], // sector
-            ];
-        }
-
-        return $data;
+        return [
+            ['John Borrower', 'NMB', '0123456789012', 'REF-001', 500000, 12.5, 12, 'monthly', Carbon::now()->subDays(5)->format('Y-m-d'), $sampleOfficer, 'Business'],
+            ['Jane Borrower', 'CRDB', '9988776655443', '', 750000, 10, 6, 'monthly', Carbon::now()->subDays(10)->format('Y-m-d'), $sampleOfficer, 'Agriculture'],
+        ];
     }
 
     public function headings(): array
     {
         return [
             'customer_name',
-            'customer_no',
+            'bank_name',
+            'bank_account',
+            'reference',
             'amount',
-            'period',
             'interest',
-            'date_applied',
+            'period',
             'interest_cycle',
-            'loan_officer_id',
-            'group_id',
+            'date_applied',
+            'loan_officer',
             'sector',
         ];
     }
@@ -74,12 +54,11 @@ class LoanImportTemplateExport implements FromArray, WithHeadings, WithStyles, W
     {
         return [
             1 => [
-                'font' => ['bold' => true],
+                'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF']],
                 'fill' => [
                     'fillType' => Fill::FILL_SOLID,
-                    'startColor' => ['argb' => 'FF4472C4']
+                    'startColor' => ['argb' => 'FF4472C4'],
                 ],
-                'font' => ['color' => ['argb' => 'FFFFFFFF'], 'bold' => true],
                 'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
             ],
         ];
@@ -88,16 +67,17 @@ class LoanImportTemplateExport implements FromArray, WithHeadings, WithStyles, W
     public function columnWidths(): array
     {
         return [
-            'A' => 25,  // customer_name
-            'B' => 15,  // customer_no
-            'C' => 15,  // amount
-            'D' => 10,  // period
-            'E' => 12,  // interest
-            'F' => 15,  // date_applied
-            'G' => 15,  // interest_cycle
-            'H' => 15,  // loan_officer_id
-            'I' => 12,  // group_id
-            'J' => 20,  // sector
+            'A' => 28,
+            'B' => 12,
+            'C' => 18,
+            'D' => 18,
+            'E' => 14,
+            'F' => 12,
+            'G' => 10,
+            'H' => 16,
+            'I' => 14,
+            'J' => 28,
+            'K' => 18,
         ];
     }
 
@@ -109,86 +89,92 @@ class LoanImportTemplateExport implements FromArray, WithHeadings, WithStyles, W
     public function registerEvents(): array
     {
         return [
-            AfterSheet::class => function(AfterSheet $event) {
+            AfterSheet::class => function (AfterSheet $event) {
                 $sheet = $event->sheet->getDelegate();
                 $spreadsheet = $sheet->getParent();
-                
-                // Create helper sheet for dropdown data (hidden)
+
+                $branchId = auth()->user()->branch_id ?? null;
+                $officers = User::query()
+                    ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+                    ->orderBy('name')
+                    ->get(['name']);
+
+                if ($officers->isEmpty()) {
+                    $officers = User::query()->orderBy('name')->limit(200)->get(['name']);
+                }
+
                 $helperSheet = $spreadsheet->createSheet();
                 $helperSheet->setTitle('Data');
                 $helperSheet->setSheetState(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet::SHEETSTATE_HIDDEN);
-                
-                // Write interest cycles to helper sheet (Column A)
-                $interestCycles = ['monthly', 'weekly', 'daily', 'quarterly', 'yearly'];
+
+                $interestCycles = ['daily', 'weekly', 'bimonthly', 'monthly', 'quarterly', 'semi_annually', 'annually', 'yearly'];
                 $helperSheet->setCellValue('A1', 'Interest Cycles');
-                foreach ($interestCycles as $index => $cycle) {
-                    $helperSheet->setCellValue('A' . ($index + 2), $cycle);
+                foreach ($interestCycles as $i => $cycle) {
+                    $helperSheet->setCellValue('A' . ($i + 2), $cycle);
                 }
-                
-                // Write sectors to helper sheet (Column B)
-                $sectors = ['Agriculture', 'Business', 'Trade', 'Services', 'Manufacturing', 'Education', 'Health', 'Transport', 'Construction', 'Tourism'];
+                $cycleEnd = count($interestCycles) + 1;
+
+                $sectors = ['Agriculture', 'Business', 'Education', 'Health', 'Other'];
                 $helperSheet->setCellValue('B1', 'Sectors');
-                foreach ($sectors as $index => $sector) {
-                    $helperSheet->setCellValue('B' . ($index + 2), $sector);
+                foreach ($sectors as $i => $sector) {
+                    $helperSheet->setCellValue('B' . ($i + 2), $sector);
                 }
-                
-                // Headers are at row 1 (from WithHeadings), data starts at row 2
-                // Insert instruction rows AFTER headers (rows 2-5)
-                $sheet->insertNewRowBefore(2, 4);
-                
-                // Instructions (rows 2-5, header stays at row 1)
-                $sheet->setCellValue('A2', 'LOAN IMPORT TEMPLATE');
-                $sheet->mergeCells('A2:J2');
-                $sheet->getStyle('A2')->getFont()->setBold(true)->setSize(14);
-                $sheet->getStyle('A2')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-                $sheet->getStyle('A2')->getFill()
-                    ->setFillType(Fill::FILL_SOLID)
-                    ->getStartColor()->setARGB('FF4472C4');
-                $sheet->getStyle('A2')->getFont()->getColor()->setARGB('FFFFFFFF');
-                
-                $sheet->setCellValue('A3', 'Instructions:');
-                $sheet->getStyle('A3')->getFont()->setBold(true);
-                $sheet->setCellValue('A4', '1. Fill in all required fields (customer_no, amount, period, interest, date_applied, interest_cycle, loan_officer_id, group_id, sector)');
-                $sheet->setCellValue('A5', '2. Use dropdowns for Interest Cycle (Column G) and Sector (Column J)');
-                $sheet->setCellValue('A6', '3. IMPORTANT: Keep the header row (row 1) - DO NOT DELETE IT. You can delete instruction rows (2-6) and sample data.');
-                $sheet->mergeCells('A4:J4');
-                $sheet->mergeCells('A5:J5');
-                $sheet->mergeCells('A6:J6');
-                
-                // Header row is at row 1, data starts at row 7 (after 1 header + 5 instruction rows)
-                $dataStartRow = 7;
-                $dataEndRow = 56; // 50 sample loans + header row
-                
-                // Add interest cycle dropdown (Column G)
-                $interestCycleValidation = new DataValidation();
-                $interestCycleValidation->setType(DataValidation::TYPE_LIST);
-                $interestCycleValidation->setErrorStyle(DataValidation::STYLE_STOP);
-                $interestCycleValidation->setAllowBlank(false);
-                $interestCycleValidation->setShowInputMessage(true);
-                $interestCycleValidation->setShowErrorMessage(true);
-                $interestCycleValidation->setShowDropDown(true);
-                $interestCycleValidation->setFormula1('Data!$A$2:$A$' . (count($interestCycles) + 1));
-                
-                // Add sector dropdown (Column J) using helper sheet
-                $sectorValidation = new DataValidation();
-                $sectorValidation->setType(DataValidation::TYPE_LIST);
-                $sectorValidation->setErrorStyle(DataValidation::STYLE_STOP);
-                $sectorValidation->setAllowBlank(false);
-                $sectorValidation->setShowInputMessage(true);
-                $sectorValidation->setShowErrorMessage(true);
-                $sectorValidation->setShowDropDown(true);
-                $sectorValidation->setFormula1('Data!$B$2:$B$' . (count($sectors) + 1));
-                
-                // Apply validations to all data rows
+                $sectorEnd = count($sectors) + 1;
+
+                $banks = ['NMB', 'CRDB', 'NBC', 'ABSA'];
+                $helperSheet->setCellValue('C1', 'Banks');
+                foreach ($banks as $i => $bank) {
+                    $helperSheet->setCellValue('C' . ($i + 2), $bank);
+                }
+                $bankEnd = count($banks) + 1;
+
+                $helperSheet->setCellValue('D1', 'Loan Officers');
+                foreach ($officers as $i => $officer) {
+                    $helperSheet->setCellValue('D' . ($i + 2), $officer->name);
+                }
+                $officerEnd = max(2, $officers->count() + 1);
+
+                $dataStartRow = 2;
+                $dataEndRow = 500;
+
                 for ($row = $dataStartRow; $row <= $dataEndRow; $row++) {
-                    // Interest cycle dropdown (Column G)
-                    $sheet->getCell('G' . $row)->setDataValidation(clone $interestCycleValidation);
-                    // Sector dropdown (Column J)
-                    $sheet->getCell('J' . $row)->setDataValidation(clone $sectorValidation);
+                    $bankValidation = new DataValidation();
+                    $bankValidation->setType(DataValidation::TYPE_LIST);
+                    $bankValidation->setErrorStyle(DataValidation::STYLE_STOP);
+                    $bankValidation->setAllowBlank(false);
+                    $bankValidation->setShowDropDown(true);
+                    $bankValidation->setFormula1('Data!$C$2:$C$' . $bankEnd);
+                    $sheet->getCell('B' . $row)->setDataValidation($bankValidation);
+
+                    $cycleValidation = new DataValidation();
+                    $cycleValidation->setType(DataValidation::TYPE_LIST);
+                    $cycleValidation->setErrorStyle(DataValidation::STYLE_STOP);
+                    $cycleValidation->setAllowBlank(false);
+                    $cycleValidation->setShowDropDown(true);
+                    $cycleValidation->setFormula1('Data!$A$2:$A$' . $cycleEnd);
+                    $sheet->getCell('H' . $row)->setDataValidation($cycleValidation);
+
+                    $sectorValidation = new DataValidation();
+                    $sectorValidation->setType(DataValidation::TYPE_LIST);
+                    $sectorValidation->setErrorStyle(DataValidation::STYLE_STOP);
+                    $sectorValidation->setAllowBlank(false);
+                    $sectorValidation->setShowDropDown(true);
+                    $sectorValidation->setFormula1('Data!$B$2:$B$' . $sectorEnd);
+                    $sheet->getCell('K' . $row)->setDataValidation($sectorValidation);
+
+                    if ($officers->isNotEmpty()) {
+                        $officerValidation = new DataValidation();
+                        $officerValidation->setType(DataValidation::TYPE_LIST);
+                        $officerValidation->setErrorStyle(DataValidation::STYLE_STOP);
+                        $officerValidation->setAllowBlank(false);
+                        $officerValidation->setShowDropDown(true);
+                        $officerValidation->setFormula1('Data!$D$2:$D$' . $officerEnd);
+                        $sheet->getCell('J' . $row)->setDataValidation($officerValidation);
+                    }
                 }
-                
-                // Add borders to header row
-                $sheet->getStyle('A1:J1')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+                $sheet->getStyle('A1:K1')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+                $sheet->freezePane('A2');
             },
         ];
     }

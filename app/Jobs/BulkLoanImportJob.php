@@ -76,7 +76,10 @@ class BulkLoanImportJob implements ShouldQueue
                 $validated = $this->validateLoanRow($rowData, $rowNumber);
                 
                 if (isset($validated['error'])) {
-                    if (strpos($validated['error'], 'Customer number') !== false && strpos($validated['error'], 'not found') !== false) {
+                    if (
+                        (strpos($validated['error'], 'Customer number') !== false || strpos($validated['error'], 'Customer') !== false)
+                        && strpos($validated['error'], 'not found') !== false
+                    ) {
                         $skippedCount++;
                         $this->updateProgress($skippedCount, $errorCount, $successCount, $rowIndex + 1);
                         continue;
@@ -192,9 +195,15 @@ class BulkLoanImportJob implements ShouldQueue
     private function validateLoanRow($rowData, $rowNumber)
     {
         try {
+            $usesCustomerName = isset($rowData['customer_name']) && trim((string) $rowData['customer_name']) !== '';
+
+            if ($usesCustomerName) {
+                return $this->validateLoanRowByCustomerName($rowData, $rowNumber);
+            }
+
             $required = ['customer_no', 'amount', 'period', 'interest', 'date_applied', 'interest_cycle', 'loan_officer', 'group_id', 'sector'];
             foreach ($required as $field) {
-                if (empty($rowData[$field])) {
+                if (empty($rowData[$field]) && $rowData[$field] !== '0' && $rowData[$field] !== 0) {
                     return ['error' => "Row $rowNumber: Missing required field '$field'"];
                 }
             }
@@ -216,44 +225,18 @@ class BulkLoanImportJob implements ShouldQueue
                 return ['error' => "Row $rowNumber: Invalid interest"];
             }
 
-            // Parse date
-            $dateValue = $rowData['date_applied'];
-            $parsedDate = null;
-            if (is_numeric($dateValue)) {
-                try {
-                    $carbon = \Carbon\Carbon::instance(\PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject((float) $dateValue));
-                    $parsedDate = $carbon->format('Y-m-d');
-                } catch (\Throwable $t) {
-                    return ['error' => "Row $rowNumber: Invalid date_applied"];
-                }
-            } else {
-                try {
-                    $carbon = \Carbon\Carbon::createFromFormat('Y-m-d', (string) $dateValue);
-                    $parsedDate = $carbon->format('Y-m-d');
-                } catch (\Throwable $t) {
-                    return ['error' => "Row $rowNumber: Invalid date_applied (expected YYYY-MM-DD)"];
-                }
-            }
-            
-            if (strtotime($parsedDate) > time()) {
-                return ['error' => "Row $rowNumber: Invalid date_applied (future date)"];
+            $parsedDate = $this->parseDateApplied($rowData['date_applied'], $rowNumber);
+            if (is_array($parsedDate)) {
+                return $parsedDate;
             }
 
-            $validCycles = ['daily', 'weekly', 'monthly', 'quarterly', 'semi_annually', 'annually', 'yearly'];
-            if (!in_array(strtolower($rowData['interest_cycle']), $validCycles, true)) {
+            $validCycles = ['daily', 'weekly', 'bimonthly', 'monthly', 'quarterly', 'semi_annually', 'annually', 'yearly'];
+            if (!in_array(strtolower((string) $rowData['interest_cycle']), $validCycles, true)) {
                 return ['error' => "Row $rowNumber: Invalid interest_cycle"];
             }
 
-            // Handle loan_officer - can be ID or name
-            $loanOfficerId = null;
-            if (is_numeric($rowData['loan_officer'])) {
-                $loanOfficerId = $rowData['loan_officer'];
-            } else {
-                $officer = User::where('name', trim($rowData['loan_officer']))->first();
-                $loanOfficerId = $officer ? $officer->id : null;
-            }
-            
-            if (!$loanOfficerId || !User::find($loanOfficerId)) {
+            $loanOfficerId = $this->resolveLoanOfficerId($rowData['loan_officer']);
+            if (!$loanOfficerId) {
                 return ['error' => "Row $rowNumber: Invalid loan_officer"];
             }
 
@@ -268,14 +251,149 @@ class BulkLoanImportJob implements ShouldQueue
                 'period' => (int) $rowData['period'],
                 'interest' => (float) $rowData['interest'],
                 'date_applied' => $parsedDate,
-                'interest_cycle' => strtolower($rowData['interest_cycle']),
+                'interest_cycle' => strtolower((string) $rowData['interest_cycle']),
                 'loan_officer' => $loanOfficerId,
                 'group_id' => (int) $rowData['group_id'],
                 'sector' => $rowData['sector'],
+                'reference' => null,
             ];
         } catch (\Exception $e) {
             return ['error' => "Row $rowNumber: Validation error - " . $e->getMessage()];
         }
+    }
+
+    private function validateLoanRowByCustomerName($rowData, $rowNumber)
+    {
+        $required = ['customer_name', 'bank_name', 'bank_account', 'amount', 'period', 'interest', 'date_applied', 'interest_cycle', 'loan_officer', 'sector'];
+        foreach ($required as $field) {
+            if (!isset($rowData[$field]) || trim((string) $rowData[$field]) === '') {
+                return ['error' => "Row $rowNumber: Missing required field '$field'"];
+            }
+        }
+
+        $name = trim((string) $rowData['customer_name']);
+        $customerQuery = Customer::where('branch_id', $this->branchId)->where('name', $name);
+        $matches = $customerQuery->get();
+        if ($matches->isEmpty()) {
+            return ['error' => "Row $rowNumber: Customer '{$name}' not found in this branch"];
+        }
+        if ($matches->count() > 1) {
+            return ['error' => "Row $rowNumber: Multiple customers named '{$name}' in this branch"];
+        }
+        $customer = $matches->first();
+
+        if (!is_numeric($rowData['amount']) || $rowData['amount'] <= 0) {
+            return ['error' => "Row $rowNumber: Invalid amount"];
+        }
+
+        if (!is_numeric($rowData['period']) || $rowData['period'] <= 0) {
+            return ['error' => "Row $rowNumber: Invalid period"];
+        }
+
+        if (!is_numeric($rowData['interest']) || $rowData['interest'] < 0) {
+            return ['error' => "Row $rowNumber: Invalid interest"];
+        }
+
+        $allowedBanks = ['NMB', 'CRDB', 'NBC', 'ABSA'];
+        $bankName = strtoupper(trim((string) $rowData['bank_name']));
+        if (!in_array($bankName, $allowedBanks, true)) {
+            return ['error' => "Row $rowNumber: bank_name must be one of: " . implode(', ', $allowedBanks)];
+        }
+
+        $bankAccount = preg_replace('/\s+/', '', (string) $rowData['bank_account']);
+        if ($bankAccount === '') {
+            return ['error' => "Row $rowNumber: bank_account is required"];
+        }
+
+        $parsedDate = $this->parseDateApplied($rowData['date_applied'], $rowNumber);
+        if (is_array($parsedDate)) {
+            return $parsedDate;
+        }
+
+        $validCycles = ['daily', 'weekly', 'bimonthly', 'monthly', 'quarterly', 'semi_annually', 'annually', 'yearly'];
+        if (!in_array(strtolower((string) $rowData['interest_cycle']), $validCycles, true)) {
+            return ['error' => "Row $rowNumber: Invalid interest_cycle"];
+        }
+
+        $loanOfficerId = $this->resolveLoanOfficerId($rowData['loan_officer']);
+        if (!$loanOfficerId) {
+            return ['error' => "Row $rowNumber: Invalid loan_officer"];
+        }
+
+        $allowedSectors = ['Agriculture', 'Business', 'Education', 'Health', 'Other'];
+        $sector = trim((string) $rowData['sector']);
+        if (!in_array($sector, $allowedSectors, true)) {
+            return ['error' => "Row $rowNumber: sector must be one of: " . implode(', ', $allowedSectors)];
+        }
+
+        $reference = isset($rowData['reference']) ? trim((string) $rowData['reference']) : '';
+        $reference = $reference === '' ? null : $reference;
+
+        return [
+            'customer_id' => $customer->id,
+            'customer_no' => $customer->customerNo,
+            'amount' => (float) $rowData['amount'],
+            'period' => (int) $rowData['period'],
+            'interest' => (float) $rowData['interest'],
+            'date_applied' => $parsedDate,
+            'interest_cycle' => strtolower((string) $rowData['interest_cycle']),
+            'loan_officer' => $loanOfficerId,
+            'group_id' => 1,
+            'sector' => $sector,
+            'reference' => $reference,
+            'bank_name' => $bankName,
+            'bank_account' => $bankAccount,
+        ];
+    }
+
+    /**
+     * @return string|array{error: string}
+     */
+    private function parseDateApplied($dateValue, $rowNumber)
+    {
+        if (is_numeric($dateValue)) {
+            try {
+                $carbon = \Carbon\Carbon::instance(\PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject((float) $dateValue));
+                $parsedDate = $carbon->format('Y-m-d');
+            } catch (\Throwable $t) {
+                return ['error' => "Row $rowNumber: Invalid date_applied"];
+            }
+        } else {
+            try {
+                $carbon = \Carbon\Carbon::createFromFormat('Y-m-d', (string) $dateValue);
+                $parsedDate = $carbon->format('Y-m-d');
+            } catch (\Throwable $t) {
+                return ['error' => "Row $rowNumber: Invalid date_applied (expected YYYY-MM-DD)"];
+            }
+        }
+
+        if (strtotime($parsedDate) > time()) {
+            return ['error' => "Row $rowNumber: Invalid date_applied (future date)"];
+        }
+
+        return $parsedDate;
+    }
+
+    private function resolveLoanOfficerId($raw): ?int
+    {
+        if ($raw === '' || $raw === null) {
+            return null;
+        }
+        if (is_numeric($raw)) {
+            $id = (int) $raw;
+            $user = User::where('id', $id)->where('branch_id', $this->branchId)->first()
+                ?? User::where('id', $id)->first();
+
+            return $user ? $user->id : null;
+        }
+
+        $name = trim((string) $raw);
+        $officer = User::where('name', $name)
+            ->where('branch_id', $this->branchId)
+            ->first()
+            ?? User::where('name', $name)->first();
+
+        return $officer ? (int) $officer->id : null;
     }
 
     private function validateProductLimits($validated, $product)
@@ -313,7 +431,15 @@ class BulkLoanImportJob implements ShouldQueue
             'status' => 'active',
             'interest_cycle' => $validated['interest_cycle'],
             'loan_officer_id' => $validated['loan_officer'],
+            'reference' => $validated['reference'] ?? null,
         ]);
+
+        if (!empty($validated['bank_name']) && isset($validated['bank_account'])) {
+            Customer::where('id', $validated['customer_id'])->update([
+                'bank_name' => $validated['bank_name'],
+                'bank_account' => $validated['bank_account'],
+            ]);
+        }
 
         // Calculate interest and repayment dates
         $interestAmount = $loan->calculateInterestAmount($validated['interest']);

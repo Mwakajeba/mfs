@@ -677,7 +677,7 @@ class LoanController extends Controller
                 // Find header row (skip instruction rows)
                 $headerRowIndex = 0;
                 
-                // Look for header row - it should contain at least 'customer_no' and 'amount'
+                // Look for header row: customer_name + amount (new template) or customer_no + amount (legacy)
                 for ($i = 0; $i < min(20, count($rows)); $i++) {
                     $potentialHeader = array_map(function($cell) {
                         $value = is_null($cell) ? '' : (string)$cell;
@@ -703,12 +703,15 @@ class LoanController extends Controller
                         $variations = [
                             'customer_no' => ['customerno', 'customer_no', 'customernumber', 'customer_number'],
                             'customer_name' => ['customername', 'customer_name', 'name'],
+                            'bank_name' => ['bank', 'bankname', 'bank_name'],
+                            'bank_account' => ['bankaccount', 'bank_account', 'account'],
+                            'reference' => ['reference', 'ref'],
                             'amount' => ['amount', 'loanamount', 'loan_amount'],
                             'period' => ['period', 'tenure', 'duration'],
                             'interest' => ['interest', 'interestrate', 'interest_rate'],
                             'date_applied' => ['dateapplied', 'date_applied', 'applieddate', 'applicationdate'],
                             'interest_cycle' => ['interestcycle', 'interest_cycle', 'cycle'],
-                            'loan_officer' => ['loanofficer', 'loan_officer', 'loanofficer_id', 'loan_officer_id'],
+                            'loan_officer' => ['loanofficer', 'loan_officer', 'loanofficer_id', 'loan_officer_id', 'loanid'],
                             'group_id' => ['groupid', 'group_id', 'group'],
                             'sector' => ['sector', 'businesssector'],
                         ];
@@ -721,8 +724,10 @@ class LoanController extends Controller
                         return $col;
                     }, $potentialHeader);
                     
-                    // Check if this row contains required columns
-                    if (in_array('customer_no', $normalizedHeader) && in_array('amount', $normalizedHeader)) {
+                    $hasAmount = in_array('amount', $normalizedHeader, true);
+                    $isNewHeader = $hasAmount && in_array('customer_name', $normalizedHeader, true);
+                    $isLegacyHeader = $hasAmount && in_array('customer_no', $normalizedHeader, true);
+                    if ($isNewHeader || $isLegacyHeader) {
                         $header = $normalizedHeader;
                         $headerRowIndex = $i;
                         break;
@@ -731,7 +736,7 @@ class LoanController extends Controller
                 
                 if (empty($header)) {
                     return redirect()->back()->withErrors([
-                        'import_file' => 'Could not find header row. Please ensure the file has columns: customer_no, amount, period, interest, date_applied, interest_cycle, loan_officer, group_id, sector'
+                        'import_file' => 'Could not find header row. Use the sample file: customer_name, bank_name, bank_account, reference (optional), amount, interest, period, interest_cycle, date_applied, loan_officer, sector — or legacy customer_no import with amount.'
                     ]);
                 }
                 
@@ -764,15 +769,19 @@ class LoanController extends Controller
                     $normalizedHeader = array_map(function($col) {
                         $col = strtolower(trim($col));
                         $col = preg_replace('/\s+/', '', $col);
+                        $col = preg_replace('/[^a-z0-9_]/', '', $col);
                         $variations = [
                             'customer_no' => ['customerno', 'customer_no', 'customernumber'],
                             'customer_name' => ['customername', 'customer_name', 'name'],
+                            'bank_name' => ['bank', 'bankname', 'bank_name'],
+                            'bank_account' => ['bankaccount', 'bank_account', 'account'],
+                            'reference' => ['reference', 'ref'],
                             'amount' => ['amount', 'loanamount'],
                             'period' => ['period', 'tenure'],
                             'interest' => ['interest', 'interestrate'],
                             'date_applied' => ['dateapplied', 'date_applied'],
                             'interest_cycle' => ['interestcycle', 'interest_cycle'],
-                            'loan_officer' => ['loanofficer', 'loan_officer', 'loanofficer_id'],
+                            'loan_officer' => ['loanofficer', 'loan_officer', 'loanofficer_id', 'loan_officer_id', 'loanid'],
                             'group_id' => ['groupid', 'group_id'],
                             'sector' => ['sector'],
                         ];
@@ -785,7 +794,9 @@ class LoanController extends Controller
                         return $col;
                     }, $potentialHeader);
                     
-                    if (in_array('customer_no', $normalizedHeader) && in_array('amount', $normalizedHeader)) {
+                    $hasAmount = in_array('amount', $normalizedHeader, true);
+                    if (($hasAmount && in_array('customer_name', $normalizedHeader, true))
+                        || ($hasAmount && in_array('customer_no', $normalizedHeader, true))) {
                         $header = $normalizedHeader;
                         $headerRowIndex = $i;
                         break;
@@ -794,7 +805,7 @@ class LoanController extends Controller
                 
                 if (empty($header)) {
                     return redirect()->back()->withErrors([
-                        'import_file' => 'Could not find header row. Please ensure the file has columns: customer_no, amount, period, interest, date_applied, interest_cycle, loan_officer, group_id, sector'
+                        'import_file' => 'Could not find header row. Use the sample file columns (customer_name, bank_name, bank_account, amount, …) or legacy customer_no import.'
                     ]);
                 }
                 
@@ -821,13 +832,15 @@ class LoanController extends Controller
                 ]);
             }
 
-            // Validate file structure
-            $requiredColumns = ['customer_no', 'amount', 'period', 'interest', 'date_applied', 'interest_cycle', 'loan_officer', 'group_id', 'sector'];
+            // Validate file structure (name-based import omits group_id; group_id is forced to 1 in the job)
+            $usesNameImport = in_array('customer_name', $header, true);
+            $requiredColumns = $usesNameImport
+                ? ['customer_name', 'bank_name', 'bank_account', 'amount', 'period', 'interest', 'date_applied', 'interest_cycle', 'loan_officer', 'sector']
+                : ['customer_no', 'amount', 'period', 'interest', 'date_applied', 'interest_cycle', 'loan_officer', 'group_id', 'sector'];
             $missingColumns = array_diff($requiredColumns, $header);
             
             if (!empty($missingColumns)) {
-                $foundColumns = implode(', ', array_keys(array_intersect_key($header, array_flip($requiredColumns))));
-                $allFoundColumns = implode(', ', array_keys($header));
+                $allFoundColumns = implode(', ', $header);
                 return redirect()->back()->withErrors([
                     'import_file' => 'Missing required columns: ' . implode(', ', $missingColumns) . 
                     '. Found columns: ' . ($allFoundColumns ?: 'none') . 
