@@ -75,6 +75,8 @@
                                         <th>Customer No</th>
                                         <th>Name</th>
                                         <th>Phone</th>
+                                        <th>Bank</th>
+                                        <th>Account</th>
                                         <th>Region</th>
                                         <th>District</th>
                                         <th>Branch</th>
