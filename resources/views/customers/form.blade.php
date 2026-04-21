@@ -166,10 +166,10 @@ $isEdit = isset($customer);
 
         <!-- DOB -->
         <div class="col-md-6 mb-3">
-            <label class="form-label">Date of Birth <span class="text-danger">*</span></label>
+            <label class="form-label">Date of Birth</label>
             <input type="date" name="dob" id="dob" class="form-control @error('dob') is-invalid @enderror"
-                value="{{ old('dob', isset($customer) && $customer->dob ? \Carbon\Carbon::parse($customer->dob)->format('Y-m-d') : '') }}" max="{{ date('Y-m-d', strtotime('-18 years')) }}">
-            <small class="form-text text-muted">Age must be 18 years or older</small>
+                value="{{ old('dob', isset($customer) && $customer->dob ? \Carbon\Carbon::parse($customer->dob)->format('Y-m-d') : '') }}">
+            <small class="form-text text-muted">Optional (if provided, must be 18+)</small>
             @error('dob') <div class="invalid-feedback">{{ $message }}</div> @enderror
         </div>
 
@@ -219,28 +219,7 @@ $isEdit = isset($customer);
         </div>
         @endif
 
-        <!-- Cash Collateral -->
-        <div class="col-md-6 mb-3">
-            <div class="form-check">
-                <input type="checkbox" class="form-check-input" value="1" name="has_cash_collateral"
-                    id="has_cash_collateral" {{ old('has_cash_collateral', $customer->has_cash_collateral ?? false) ? 'checked' : '' }}>
-                <label class="form-check-label" for="has_cash_collateral">Has Cash Collateral</label>
-            </div>
-        </div>
-
-        <!-- Collateral Type -->
-        <div class="col-md-6 mb-3" id="collateral-type-container" style="display: none;">
-            <label class="form-label">Collateral Type</label>
-            <select name="collateral_type_id" class="form-select">
-                <option value="">Select Collateral Type</option>
-                @foreach($collateralTypes as $type)
-                    <option value="{{ $type->id }}"
-                        {{ old('collateral_type_id', isset($customer) ? ($customer->collaterals->first()->type_id ?? $customer->collateral_type_id ?? '') : '') == $type->id ? 'selected' : '' }}>
-                        {{ $type->name }}
-                    </option>
-                @endforeach
-            </select>
-        </div>
+        {{-- Cash collateral feature disabled for this company --}}
 
         <!-- Loan Officers -->
         <div class="col-md-12 mb-3">
@@ -360,22 +339,8 @@ $isEdit = isset($customer);
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        const checkbox = document.querySelector('#has_cash_collateral');
-        const collateralContainer = document.querySelector('#collateral-type-container');
         const regionSelect = document.querySelector('#region');
         const districtSelect = document.querySelector('#district');
-
-        // Show/hide collateral type
-        function toggleCollateralField() {
-            if (checkbox.checked) {
-                collateralContainer.style.display = 'block';
-            } else {
-                collateralContainer.style.display = 'none';
-            }
-        }
-
-        checkbox.addEventListener('change', toggleCollateralField);
-        toggleCollateralField(); // On load
 
         // Load districts on region change
         regionSelect.addEventListener('change', function() {

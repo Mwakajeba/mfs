@@ -226,7 +226,10 @@ class CustomerController extends Controller
             'phone2' => 'nullable|string|max:20',
             'bank_name' => 'nullable|in:NMB,CRDB,NBC,ABSA',
             'bank_account' => 'nullable|string|max:50',
-            'dob' => ['required', 'date', function ($attribute, $value, $fail) {
+            'dob' => ['nullable', 'date', function ($attribute, $value, $fail) {
+                if (empty($value)) {
+                    return;
+                }
                 $dob = \Carbon\Carbon::parse($value);
                 $age = $dob->age;
                 if ($age < 18) {
@@ -241,6 +244,10 @@ class CustomerController extends Controller
             'idType' => 'nullable|string|max:100',
             'idNumber' => ['nullable', 'string', 'max:100', function ($attribute, $value, $fail) use ($request) {
                 if ($request->idType === 'National ID' && $value) {
+                    if (empty($request->dob)) {
+                        $fail('Date of Birth is required when using National ID.');
+                        return;
+                    }
                     $validation = $this->validateNationalId($value, $request->dob, $request->sex);
                     if (!$validation['valid']) {
                         $fail($validation['message']);
@@ -253,8 +260,6 @@ class CustomerController extends Controller
             'photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'loan_officer_ids' => 'nullable|array',
             'loan_officer_ids.*' => 'exists:users,id',
-            'has_cash_collateral' => 'nullable|boolean',
-            'collateral_type_id' => 'nullable|exists:cash_collateral_types,id',
 
             // Dynamic filetypes + documents
             'filetypes' => 'nullable|array',
@@ -266,7 +271,7 @@ class CustomerController extends Controller
         $validated = $request->validate($rules);
 
         // Prepare customer data
-        $data = $request->except(['customerNo', 'loan_officer_ids', 'collateral_type_id', 'filetypes', 'documents', 'group_id']);
+        $data = $request->except(['customerNo', 'loan_officer_ids', 'collateral_type_id', 'has_cash_collateral', 'filetypes', 'documents', 'group_id']);
         // Format phone numbers
         $data["phone1"] = $this->formatPhoneNumber($data["phone1"]);
         if (!empty($data["phone2"])) {
@@ -282,7 +287,6 @@ class CustomerController extends Controller
         $data['company_id'] = auth()->user()->company_id;
         $data['registrar'] = auth()->id();
         $data['dateRegistered'] = $date;
-        $data['has_cash_collateral'] = $request->has('has_cash_collateral');
 
         // Upload photo
         if ($request->hasFile('photo')) {
@@ -333,17 +337,6 @@ class CustomerController extends Controller
                         'updated_at' => now(),
                     ]);
                 }
-            }
-
-            // Add cash collateral
-            if ($request->has('has_cash_collateral') && $request->input('collateral_type_id')) {
-                \App\Models\CashCollateral::create([
-                    'customer_id' => $customer->id,
-                    'type_id' => $request->input('collateral_type_id'),
-                    'amount' => 0,
-                    'branch_id' => auth()->user()->branch_id,
-                    'company_id' => auth()->user()->company_id,
-                ]);
             }
 
             // Save uploaded filetypes + documents
@@ -421,7 +414,10 @@ class CustomerController extends Controller
             'phone2' => 'nullable|string|max:20',
             'bank_name' => 'nullable|in:NMB,CRDB,NBC,ABSA',
             'bank_account' => 'nullable|string|max:50',
-            'dob' => ['required', 'date', function ($attribute, $value, $fail) {
+            'dob' => ['nullable', 'date', function ($attribute, $value, $fail) {
+                if (empty($value)) {
+                    return;
+                }
                 $dob = \Carbon\Carbon::parse($value);
                 $age = $dob->age;
                 if ($age < 18) {
@@ -436,6 +432,10 @@ class CustomerController extends Controller
             'idType' => 'nullable|string|max:100',
             'idNumber' => ['nullable', 'string', 'max:100', function ($attribute, $value, $fail) use ($request) {
                 if ($request->idType === 'National ID' && $value) {
+                    if (empty($request->dob)) {
+                        $fail('Date of Birth is required when using National ID.');
+                        return;
+                    }
                     $validation = $this->validateNationalId($value, $request->dob, $request->sex);
                     if (!$validation['valid']) {
                         $fail($validation['message']);
@@ -448,8 +448,6 @@ class CustomerController extends Controller
             'password' => 'nullable|min:6',
             'loan_officer_ids' => 'nullable|array',
             'loan_officer_ids.*' => 'exists:users,id',
-            'has_cash_collateral' => 'nullable|boolean',
-            'collateral_type_id' => 'nullable|exists:cash_collateral_types,id', // Made optional
 
             'filetypes' => 'nullable|array',
             'filetypes.*' => 'exists:filetypes,id',
@@ -457,7 +455,7 @@ class CustomerController extends Controller
             'documents.*' => 'file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
         ]);
 
-        $data = $request->except(['customerNo', 'loan_officer_ids', 'collateral_type_id']);
+        $data = $request->except(['customerNo', 'loan_officer_ids', 'collateral_type_id', 'has_cash_collateral']);
         // Format phone numbers
         $data["phone1"] = $this->formatPhoneNumber($data["phone1"]);
         if (!empty($data["phone2"])) {
@@ -469,7 +467,6 @@ class CustomerController extends Controller
         $data['branch_id'] = auth()->user()->branch_id;
         $data['company_id'] = auth()->user()->company_id;
         $data['registrar'] = auth()->id();
-        $data['has_cash_collateral'] = $request->has('has_cash_collateral') ? true : false; // Set boolean value
 
         // Hash password only if provided
         if (!empty($request->password)) {
@@ -534,29 +531,6 @@ class CustomerController extends Controller
             } else {
                 // If none selected, remove all previous
                 DB::table('customer_officer')->where('customer_id', $customer->id)->delete();
-            }
-
-            // Handle cash collateral
-            if ($request->has('has_cash_collateral') && $request->has('collateral_type_id') && $request->collateral_type_id) {
-                // Check if collateral already exists
-                $existingCollateral = \App\Models\CashCollateral::where('customer_id', $customer->id)->first();
-
-                if ($existingCollateral) {
-                    $existingCollateral->update([
-                        'type_id' => $request->input('collateral_type_id'),
-                    ]);
-                } else {
-                    \App\Models\CashCollateral::create([
-                        'customer_id' => $customer->id,
-                        'type_id' => $request->input('collateral_type_id'),
-                        'amount' => 0,
-                        'branch_id' => auth()->user()->branch_id,
-                        'company_id' => auth()->user()->company_id,
-                    ]);
-                }
-            } else {
-                // If not checked, remove existing collateral
-                \App\Models\CashCollateral::where('customer_id', $customer->id)->delete();
             }
 
             // Sync File Types and Uploaded Documents
