@@ -664,6 +664,8 @@ class CustomerController extends Controller
                         // Handle common variations
                         $variations = [
                             'name' => ['name', 'fullname', 'full_name', 'customername', 'customer_name', 'fullname'],
+                            'bank_name' => ['bank', 'bankname', 'bank_name', 'bank_name'],
+                            'bank_account' => ['account', 'accountnumber', 'account_number', 'bankaccount', 'bank_account'],
                             'phone1' => ['phone1', 'phone', 'phone_1', 'phonenumber', 'phone_number', 'mobile', 'mobile1', 'phonenumber1'],
                             'phone2' => ['phone2', 'phone_2', 'mobile2', 'alternatephone', 'alternate_phone', 'phonenumber2'],
                             'dob' => ['dob', 'dateofbirth', 'date_of_birth', 'birthdate', 'birth_date', 'dateofbirth'],
@@ -699,7 +701,7 @@ class CustomerController extends Controller
                 }
                 
                 if (empty($header)) {
-                    return back()->withErrors(['csv_file' => 'Could not find header row. Please ensure the file has columns: name, phone1, dob, sex']);
+                    return back()->withErrors(['csv_file' => 'Could not find header row. Please ensure the file has columns: name, bank_name, bank_account, phone1, sex, region_id, district_id']);
                 }
                 
                 // Remove rows before header and the header row itself
@@ -734,6 +736,8 @@ class CustomerController extends Controller
                         $col = preg_replace('/\s+/', '', $col);
                         $variations = [
                             'name' => ['name', 'fullname', 'full_name', 'customername', 'customer_name'],
+                            'bank_name' => ['bank', 'bankname', 'bank_name'],
+                            'bank_account' => ['account', 'accountnumber', 'account_number', 'bankaccount', 'bank_account'],
                             'phone1' => ['phone1', 'phone', 'phone_1', 'phonenumber', 'phone_number', 'mobile', 'mobile1'],
                             'phone2' => ['phone2', 'phone_2', 'mobile2', 'alternatephone', 'alternate_phone'],
                             'dob' => ['dob', 'dateofbirth', 'date_of_birth', 'birthdate', 'birth_date'],
@@ -765,7 +769,7 @@ class CustomerController extends Controller
                 }
                 
                 if (empty($header)) {
-                    return back()->withErrors(['csv_file' => 'Could not find header row. Please ensure the file has columns: name, phone1, dob, sex']);
+                    return back()->withErrors(['csv_file' => 'Could not find header row. Please ensure the file has columns: name, bank_name, bank_account, phone1, sex, region_id, district_id']);
                 }
                 
                 // Remove rows before header and the header row itself
@@ -786,7 +790,7 @@ class CustomerController extends Controller
             }
 
             // Validate file structure
-            $requiredColumns = ['name', 'phone1', 'dob', 'sex'];
+            $requiredColumns = ['name', 'bank_name', 'bank_account', 'phone1', 'sex', 'region_id', 'district_id'];
             $missingColumns = array_diff($requiredColumns, $header);
 
             if (!empty($missingColumns)) {
@@ -795,7 +799,7 @@ class CustomerController extends Controller
                 return back()->withErrors([
                     'csv_file' => 'Missing required columns: ' . implode(', ', $missingColumns) . 
                     '. Found columns: ' . ($allFoundColumns ?: 'none') . 
-                    '. Please ensure your file has the correct header row with: name, phone1, dob, sex'
+                    '. Please ensure your file has the correct header row with: name, bank_name, bank_account, phone1, sex, region_id, district_id'
                 ]);
             }
 
@@ -813,8 +817,10 @@ class CustomerController extends Controller
             // This ensures data is saved immediately without requiring queue worker
             $successCount = 0;
             $errorCount = 0;
+            $skippedDuplicateBankAccounts = 0;
             $errors = [];
             $failedRecords = [];
+            $seenBankAccounts = [];
 
             DB::beginTransaction();
             
@@ -829,8 +835,13 @@ class CustomerController extends Controller
                         try {
                             // Validate required fields
                             if (
-                                empty($rowData['name']) || empty($rowData['phone1']) || empty($rowData['dob']) ||
-                                empty($rowData['sex'])
+                                empty($rowData['name']) ||
+                                empty($rowData['bank_name']) ||
+                                empty($rowData['bank_account']) ||
+                                empty($rowData['phone1']) ||
+                                empty($rowData['sex']) ||
+                                empty($rowData['region_id']) ||
+                                empty($rowData['district_id'])
                             ) {
                                 throw new \Exception("Missing required fields");
                             }
@@ -866,19 +877,47 @@ class CustomerController extends Controller
                             $phone1 = $this->formatPhoneNumber(trim($rowData['phone1']));
                             $phone2 = !empty($rowData['phone2']) ? $this->formatPhoneNumber(trim($rowData['phone2'])) : null;
 
-                            // Determine category (Borrower/Guarantor) from file, default to Borrower
-                            $rawCategory = trim($rowData['category'] ?? '');
-                            $normalizedCategory = strtolower($rawCategory);
-                            $category = in_array($normalizedCategory, ['borrower', 'guarantor'], true)
-                                ? ucfirst($normalizedCategory)
-                                : 'Borrower';
+                            // All bulk-imported customers are Borrowers (company policy)
+                            $category = 'Borrower';
+
+                            // Enforce uniqueness of bank+account (keep first, skip duplicates)
+                            $bankName = strtoupper(trim((string) $rowData['bank_name']));
+                            $bankAccount = trim((string) $rowData['bank_account']);
+                            $bankKey = $bankName . '|' . $bankAccount;
+
+                            if (isset($seenBankAccounts[$bankKey])) {
+                                $skippedDuplicateBankAccounts++;
+                                $failedRecords[] = array_merge($rowData, [
+                                    'row_number' => ($chunkIndex * $chunkSize) + $rowIndex + 2,
+                                    'error_reason' => "Duplicate bank/account in file (keeping first only): {$bankName} / {$bankAccount}",
+                                ]);
+                                continue;
+                            }
+
+                            // Also skip if bank+account already exists in DB
+                            $alreadyExists = Customer::query()
+                                ->where('bank_name', $bankName)
+                                ->where('bank_account', $bankAccount)
+                                ->exists();
+
+                            if ($alreadyExists) {
+                                $skippedDuplicateBankAccounts++;
+                                $failedRecords[] = array_merge($rowData, [
+                                    'row_number' => ($chunkIndex * $chunkSize) + $rowIndex + 2,
+                                    'error_reason' => "Duplicate bank/account already exists (skipped): {$bankName} / {$bankAccount}",
+                                ]);
+                                continue;
+                            }
+                            $seenBankAccounts[$bankKey] = true;
 
                             // Create customer data
                             $customerData = [
                                 'name' => trim($rowData['name']),
+                                'bank_name' => $bankName,
+                                'bank_account' => $bankAccount,
                                 'phone1' => $phone1,
                                 'phone2' => $phone2,
-                                'dob' => $rowData['dob'],
+                                'dob' => !empty($rowData['dob']) ? $rowData['dob'] : null,
                                 'sex' => strtoupper($rowData['sex']),
                                 'region_id' => $regionId,
                                 'district_id' => $districtId,
@@ -946,6 +985,9 @@ class CustomerController extends Controller
                 DB::commit();
 
                 $message = "Successfully uploaded {$successCount} customers.";
+                if ($skippedDuplicateBankAccounts > 0) {
+                    $message .= " Skipped {$skippedDuplicateBankAccounts} duplicate bank/account row(s).";
+                }
 
                 return redirect()->route('customers.index')->with('success', $message);
             } catch (\Exception $e) {
