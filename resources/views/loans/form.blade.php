@@ -166,6 +166,18 @@ $isEdit = isset($loan);
             </select>
             @error('sector') <div class="invalid-feedback">{{ $message }}</div> @enderror
         </div>
+
+        <!-- Reference (optional) -->
+        <div class="col-md-6 mb-3">
+            <label class="form-label">Reference</label>
+            <input
+                type="text"
+                name="reference"
+                class="form-control @error('reference') is-invalid @enderror"
+                value="{{ old('reference', $loan->reference ?? '') }}"
+                placeholder="Optional reference">
+            @error('reference') <div class="invalid-feedback">{{ $message }}</div> @enderror
+        </div>
         <!-- Add other loan fields as needed -->
     </div>
 

@@ -1729,6 +1729,7 @@ class LoanController extends Controller
             'group_id' => 'required|exists:groups,id',
             'account_id' => 'required|exists:bank_accounts,id',
             'sector' => 'required|string',
+            'reference' => 'nullable|string|max:255',
         ]);
 
         // Debug: Log the validated data to check customer_id
@@ -1820,6 +1821,7 @@ class LoanController extends Controller
                     'status' => 'active',
                     'interest_cycle' => $validated['interest_cycle'], // Use cycle from form
                     'loan_officer_id' => $validated['loan_officer'],
+                    'reference' => $validated['reference'] ?? null,
                 ]);
                 info('loaan-->' . $loan);
 
@@ -2229,6 +2231,7 @@ class LoanController extends Controller
             'group_id' => 'required|exists:groups,id',
             'account_id' => 'required|exists:bank_accounts,id',
             'sector' => 'required|string',
+            'reference' => 'nullable|string|max:255',
         ]);
         Log::info('Update validated data:', $validated);
 
@@ -2319,6 +2322,7 @@ class LoanController extends Controller
                     'loan_officer_id' => $validated['loan_officer'],
                     'sector' => $validated['sector'],
                     'branch_id' => $branchId,
+                    'reference' => $validated['reference'] ?? null,
                 ]);
 
                 // Calculate interest and repayment dates

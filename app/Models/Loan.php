@@ -33,6 +33,7 @@ class Loan extends Model
         'interest_cycle',
         'loan_officer_id',
         'loanNo',
+        'reference',
         'top_up_id',
         'first_repayment_date',
         'last_repayment_date',
