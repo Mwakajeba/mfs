@@ -28,7 +28,7 @@
                                             <p class="text-muted mb-3">Download the sample Excel file with 100 sample customers. The file includes dropdowns for Sex, Region, and District.</p>
                                             <a href="{{ route('customers.download-sample') }}"
                                                 class="btn btn-outline-primary">
-                                                <i class="bx bx-download me-2"></i>Download Sample Excel (100 Customers)
+                                                <i class="bx bx-download me-2"></i>Download Sample Excel
                                             </a>
                                         </div>
                                     </div>
