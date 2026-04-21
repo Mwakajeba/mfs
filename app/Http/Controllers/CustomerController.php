@@ -151,10 +151,10 @@ class CustomerController extends Controller
                             </div>';
                 })
                 ->addColumn('region_name', function ($customer) {
-                    return $customer->region->name ?? '';
+                    return optional($customer->region)->name ?? '';
                 })
                 ->addColumn('district_name', function ($customer) {
-                    return $customer->district->name ?? '';
+                    return optional($customer->district)->name ?? '';
                 })
                 ->addColumn('branch_name', function ($customer) {
                     return optional($customer->branch)->name ?? '';
