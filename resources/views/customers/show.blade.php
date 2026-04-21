@@ -234,6 +234,14 @@
                                                 <td>{{ $customer->phone2 ?? 'N/A'}}</td>
                                             </tr>
                                             <tr>
+                                                <th scope="row">Bank :</th>
+                                                <td>{{ $customer->bank_name ?? 'N/A' }}</td>
+                                            </tr>
+                                            <tr>
+                                                <th scope="row">Bank Account :</th>
+                                                <td>{{ $customer->bank_account ?? 'N/A' }}</td>
+                                            </tr>
+                                            <tr>
                                                 <th scope="row">Work :</th>
                                                 <td>{{ $customer->work ?? 'N/A'}}</td>
                                             </tr>

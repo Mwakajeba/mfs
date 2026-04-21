@@ -159,6 +159,12 @@ class CustomerController extends Controller
                 ->addColumn('branch_name', function ($customer) {
                     return optional($customer->branch)->name ?? '';
                 })
+                ->addColumn('bank_name', function ($customer) {
+                    return $customer->bank_name ?? '';
+                })
+                ->addColumn('bank_account', function ($customer) {
+                    return $customer->bank_account ?? '';
+                })
                 ->addColumn('actions', function ($customer) {
                     $actions = '';
                     $encodedId = \Vinkla\Hashids\Facades\Hashids::encode($customer->id);

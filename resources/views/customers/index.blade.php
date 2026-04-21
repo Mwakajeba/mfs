@@ -156,6 +156,8 @@
                 { data: 'customerNo', name: 'customerNo', title: 'Customer No' },
                 { data: 'avatar_name', name: 'name', title: 'Name', orderable: true, searchable: true },
                 { data: 'phone1', name: 'phone1', title: 'Phone' },
+                { data: 'bank_name', name: 'bank_name', title: 'Bank' },
+                { data: 'bank_account', name: 'bank_account', title: 'Account' },
                 { data: 'region_name', name: 'region.name', title: 'Region' },
                 { data: 'district_name', name: 'district.name', title: 'District' },
                 { data: 'branch_name', name: 'branch.name', title: 'Branch' },
