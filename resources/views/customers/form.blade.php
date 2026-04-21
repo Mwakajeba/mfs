@@ -70,6 +70,28 @@ $isEdit = isset($customer);
             @error('phone2') <div class="invalid-feedback">{{ $message }}</div> @enderror
         </div>
 
+        <!-- Bank Name -->
+        <div class="col-md-6 mb-3">
+            <label class="form-label">Bank Name</label>
+            <select name="bank_name" class="form-select @error('bank_name') is-invalid @enderror">
+                <option value="">Select Bank</option>
+                @foreach(['NMB', 'CRDB', 'NBC', 'ABSA'] as $bank)
+                    <option value="{{ $bank }}" {{ old('bank_name', $customer->bank_name ?? '') === $bank ? 'selected' : '' }}>
+                        {{ $bank }}
+                    </option>
+                @endforeach
+            </select>
+            @error('bank_name') <div class="invalid-feedback">{{ $message }}</div> @enderror
+        </div>
+
+        <!-- Bank Account -->
+        <div class="col-md-6 mb-3">
+            <label class="form-label">Bank Account</label>
+            <input type="text" name="bank_account" class="form-control @error('bank_account') is-invalid @enderror"
+                value="{{ old('bank_account', $customer->bank_account ?? '') }}" placeholder="Account number">
+            @error('bank_account') <div class="invalid-feedback">{{ $message }}</div> @enderror
+        </div>
+
         <!-- Region -->
         <div class="col-md-6 mb-3">
             <label class="form-label">Region <span class="text-danger">*</span></label>

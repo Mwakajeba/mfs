@@ -224,6 +224,8 @@ class CustomerController extends Controller
             'description' => 'nullable|string|max:1000',
             'phone1' => 'required|string|max:20',
             'phone2' => 'nullable|string|max:20',
+            'bank_name' => 'nullable|in:NMB,CRDB,NBC,ABSA',
+            'bank_account' => 'nullable|string|max:50',
             'dob' => ['required', 'date', function ($attribute, $value, $fail) {
                 $dob = \Carbon\Carbon::parse($value);
                 $age = $dob->age;
@@ -417,6 +419,8 @@ class CustomerController extends Controller
             'description' => 'nullable|string|max:1000', // Added description validation
             'phone1' => 'required|string|max:20',
             'phone2' => 'nullable|string|max:20',
+            'bank_name' => 'nullable|in:NMB,CRDB,NBC,ABSA',
+            'bank_account' => 'nullable|string|max:50',
             'dob' => ['required', 'date', function ($attribute, $value, $fail) {
                 $dob = \Carbon\Carbon::parse($value);
                 $age = $dob->age;

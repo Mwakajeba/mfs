@@ -18,6 +18,8 @@ class Customer extends Model
         'workAddress',
         'phone1',
         'phone2',
+        'bank_name',
+        'bank_account',
         'registrar',
         'idType',
         'idNumber',
