@@ -12,7 +12,6 @@ use App\Models\Company;
 use App\Models\Region;
 use App\Models\District;
 use App\Models\User;
-use App\Models\CashCollateralType;
 use App\Models\Filetype;
 use App\Services\LoanPenaltyService;
 use App\Exports\CustomerBulkUploadSampleExport;
@@ -204,7 +203,6 @@ class CustomerController extends Controller
         $branchId = auth()->user()->branch_id;
         $loanOfficers = User::where('branch_id', $branchId)->excludeSuperAdmin()->get();
         $filetypes = Filetype::orderBy('name')->get();
-        $collateralTypes = CashCollateralType::where('is_active', 1)->get(); // active types only
         $branches = Branch::all();
         $companies = Company::all();
         $registrars = User::excludeSuperAdmin()->get();
@@ -212,7 +210,7 @@ class CustomerController extends Controller
         $groups = \App\Models\Group::where('branch_id', $branchId)->where('id', '!=', 1)->get();
 
         $customer = null;
-        return view('customers.create', compact('branches', 'companies', 'registrars', 'regions', 'loanOfficers', 'collateralTypes', 'filetypes', 'groups', 'customer'));
+        return view('customers.create', compact('branches', 'companies', 'registrars', 'regions', 'loanOfficers', 'filetypes', 'groups', 'customer'));
     }
 
     // Store a new customer
@@ -393,7 +391,6 @@ class CustomerController extends Controller
         $customer = Customer::findOrFail($id);
         $branchId = auth()->user()->branch_id;
         $loanOfficers = User::where('branch_id', $branchId)->excludeSuperAdmin()->get();
-        $collateralTypes = \App\Models\CashCollateralType::where('is_active', 1)->get();
         $branches = \App\Models\Branch::all();
         $companies = \App\Models\Company::all();
         $registrars = \App\Models\User::excludeSuperAdmin()->get();
@@ -401,7 +398,7 @@ class CustomerController extends Controller
         $filetypes = \App\Models\Filetype::orderBy('name')->get();
         $groups = \App\Models\Group::where('branch_id', $branchId)->get();
         $customer->load('loanOfficers', 'filetypes');
-        return view('customers.edit', compact('branches', 'companies', 'registrars', 'regions', 'loanOfficers', 'collateralTypes', 'customer', 'filetypes', 'groups'));
+        return view('customers.edit', compact('branches', 'companies', 'registrars', 'regions', 'loanOfficers', 'customer', 'filetypes', 'groups'));
     }
 
     // Update customer data
@@ -608,8 +605,7 @@ class CustomerController extends Controller
     // Show bulk upload form
     public function bulkUpload()
     {
-        $collateralTypes = CashCollateralType::where('is_active', 1)->get();
-        return view('customers.bulk-upload', compact('collateralTypes'));
+        return view('customers.bulk-upload');
     }
 
     // Process bulk upload
@@ -617,13 +613,7 @@ class CustomerController extends Controller
     {
         $request->validate([
             'csv_file' => 'required|file|mimes:csv,txt,xlsx,xls|max:10240', // 10MB max, includes Excel
-            'has_cash_collateral' => 'nullable|boolean',
-            'collateral_type_id' => 'nullable|exists:cash_collateral_types,id',
         ]);
-
-        if ($request->has('has_cash_collateral') && !$request->collateral_type_id) {
-            return back()->withErrors(['collateral_type_id' => 'Please select a collateral type when applying cash collateral.']);
-        }
 
         try {
             $file = $request->file('csv_file');
@@ -904,22 +894,10 @@ class CustomerController extends Controller
                                 'company_id' => auth()->user()->company_id,
                                 'registrar' => auth()->id(),
                                 'dateRegistered' => now()->toDateString(),
-                                'has_cash_collateral' => $request->has('has_cash_collateral'),
                                 'category' => $category,
                             ];
 
                             $customer = Customer::create($customerData);
-
-                            // Add cash collateral if selected
-                            if ($request->has('has_cash_collateral') && $request->collateral_type_id) {
-                                \App\Models\CashCollateral::create([
-                                    'customer_id' => $customer->id,
-                                    'type_id' => $request->collateral_type_id,
-                                    'amount' => 0,
-                                    'branch_id' => auth()->user()->branch_id,
-                                    'company_id' => auth()->user()->company_id,
-                                ]);
-                            }
 
                             // Assign to individual group if not already in a group
                             $existingMembership = DB::table('group_members')->where('customer_id', $customer->id)->first();
@@ -968,9 +946,6 @@ class CustomerController extends Controller
                 DB::commit();
 
                 $message = "Successfully uploaded {$successCount} customers.";
-                if ($request->has('has_cash_collateral')) {
-                    $message .= " Cash collateral applied to all customers.";
-                }
 
                 return redirect()->route('customers.index')->with('success', $message);
             } catch (\Exception $e) {

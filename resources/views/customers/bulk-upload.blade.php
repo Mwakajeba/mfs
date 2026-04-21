@@ -139,38 +139,7 @@
                                         </div>
                                     </div>
 
-                                    <!-- Cash Deposit Options -->
-                                    <div class="col-md-12 mb-4">
-                                        <div class="card">
-                                            <div class="card-header">
-                                                <h6 class="mb-0"><i class="bx bx-money me-2"></i>Cash Deposit Options
-                                                </h6>
-                                            </div>
-                                            <div class="card-body">
-                                                <div class="row">
-                                                    <div class="col-md-6 mb-3">
-                                                    <div class="form-check">
-                                                            <input type="checkbox" class="form-check-input" value="1"
-                                                                name="has_cash_collateral" id="has_cash_collateral">
-                                                            <label class="form-check-label" for="has_cash_collateral">
-                                                                Apply Cash Deposit to All Customers
-                                                            </label>
-                                                        </div>
-                                                    </div>
-
-                                                    <div class="col-md-6 mb-3" id="collateral-type-container">
-                                                        <label class="form-label">Deposit Type</label>
-                                                        <select name="collateral_type_id" class="form-select">
-                                                            <option value="">Select Deposit Type</option>
-                                                            @foreach($collateralTypes as $index => $type)
-                                                                <option value="{{ $type->id }}" {{ $index === 0 ? 'selected' : '' }}>{{ $type->name }}</option>
-                                                            @endforeach
-                                                        </select>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    {{-- Cash deposit/collateral feature disabled for this company --}}
                                 </div>
 
                                 <!-- Submit Buttons -->
@@ -195,24 +164,9 @@
 @push('scripts')
     <script>
         document.addEventListener('DOMContentLoaded', function () {
-            const checkbox = document.querySelector('#has_cash_collateral');
-            const collateralContainer = document.querySelector('#collateral-type-container');
             const form = document.querySelector('#bulkUploadForm');
             const submitBtn = document.querySelector('#submitBtn');
             const submitText = document.querySelector('#submitText');
-
-            // Show/hide collateral type
-            function toggleCollateralField() {
-                if (checkbox.checked) {
-                    collateralContainer.style.display = 'block';
-                } else {
-                    collateralContainer.style.display = 'none';
-                }
-            }
-
-            checkbox.addEventListener('change', toggleCollateralField);
-            // Initialize the state on page load
-            toggleCollateralField();
 
             // Handle form submission with progress bar
             form.addEventListener('submit', function (e) {
