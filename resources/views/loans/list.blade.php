@@ -89,6 +89,9 @@
                                                 data-bs-target="#bulkRepaymentsModal">
                                                 <i class="bx bx-receipt"></i> Bulk Repayments
                                             </button>
+                                            <a class="btn btn-outline-dark" href="{{ route('loans.monthly-deduction-export') }}">
+                                                <i class="bx bx-download"></i> Monthly Deduction Export
+                                            </a>
                                             @if(isset($status) && $status === 'applied')
                                                 <a href="{{ route('loans.application.create') }}" class="btn btn-primary">
                                                     <i class="bx bx-plus"></i> Create Loan Application

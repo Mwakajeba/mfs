@@ -32,10 +32,12 @@ use Illuminate\Support\Facades\Cache;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Exports\FailedLoanImportExport;
 use App\Exports\LoanImportTemplateExport;
+use App\Exports\MonthlyDeductionExport;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 use Vinkla\Hashids\Facades\Hashids;
 use Yajra\DataTables\Facades\DataTables;
+use Carbon\Carbon;
 
 class LoanController extends Controller
 {
@@ -3703,6 +3705,87 @@ class LoanController extends Controller
     public function downloadTemplate()
     {
         return Excel::download(new LoanImportTemplateExport(), 'loan_import_template.xlsx');
+    }
+
+    /**
+     * Monthly deduction export (active loans only).
+     *
+     * Format:
+     * SERIAL No., BANK CODE(16), BRANCH NAME(NMB), EMPLOYEE NUMBER(loan.reference), CUSTOMER NAME, ACCOUNT NO(customer.bank_account), AMOUNT
+     *
+     * AMOUNT is the sum of remaining balances (principal+interest+fees+penalty) for schedules due
+     * in the current month PLUS any unpaid amounts from previous schedules (i.e. all unpaid schedules with due_date <= endOfMonth).
+     */
+    public function monthlyDeductionExport(Request $request)
+    {
+        $branchId = auth()->user()->branch_id;
+        $month = (int) ($request->get('month') ?: Carbon::now()->month);
+        $year = (int) ($request->get('year') ?: Carbon::now()->year);
+
+        $start = Carbon::create($year, $month, 1)->startOfMonth();
+        $end = Carbon::create($year, $month, 1)->endOfMonth();
+
+        $loans = Loan::with([
+            'customer:id,name,bank_account',
+            'schedule.repayments',
+        ])
+            ->where('branch_id', $branchId)
+            ->where('status', Loan::STATUS_ACTIVE)
+            ->orderBy('id')
+            ->get();
+
+        $rows = [];
+        $serial = 1;
+
+        foreach ($loans as $loan) {
+            $customer = $loan->customer;
+            if (!$customer) {
+                continue;
+            }
+
+            $accountNo = trim((string) ($customer->bank_account ?? ''));
+            if ($accountNo === '') {
+                // skip customers without account number (cannot be deducted)
+                continue;
+            }
+
+            $deductionAmount = 0.0;
+
+            // Schedules due up to end of month (includes arrears before current month)
+            $schedules = $loan->schedule
+                ? $loan->schedule->filter(function ($s) use ($end) {
+                    if (!$s || empty($s->due_date)) return false;
+                    if ($s->status === 'cancelled') return false;
+                    return Carbon::parse($s->due_date)->lte($end);
+                })
+                : collect();
+
+            foreach ($schedules as $schedule) {
+                $remaining = (float) ($schedule->remaining_amount ?? 0);
+                if ($remaining > 0) {
+                    $deductionAmount += $remaining;
+                }
+            }
+
+            if ($deductionAmount <= 0) {
+                continue; // nothing to deduct this month
+            }
+
+            $rows[] = [
+                $serial,
+                16,
+                'NMB',
+                (string) ($loan->reference ?? ''),
+                (string) ($customer->name ?? ''),
+                $accountNo,
+                (int) round($deductionAmount),
+            ];
+            $serial++;
+        }
+
+        $filename = 'monthly_deduction_export_' . $start->format('Y_m') . '.xlsx';
+
+        return Excel::download(new MonthlyDeductionExport($rows), $filename);
     }
 
     // Legacy CSV template method (kept for reference)

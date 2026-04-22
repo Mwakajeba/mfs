@@ -987,6 +987,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('loans/import-progress', [LoanController::class, 'getImportProgress'])->name('loans.import-progress');
     Route::get('loans/import/failed/{file}', [LoanController::class, 'downloadFailedRecords'])->name('loans.import.download-failed');
     Route::get('loans/import-template', [LoanController::class, 'downloadTemplate'])->name('loans.import-template');
+    Route::get('loans/monthly-deduction-export', [LoanController::class, 'monthlyDeductionExport'])->name('loans.monthly-deduction-export');
     Route::get('loans/status/{status}', [LoanController::class, 'loansByStatus'])->name('loans.by-status');
 
     // Opening Balance Routes for loans
