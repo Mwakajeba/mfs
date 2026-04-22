@@ -17,11 +17,13 @@ use App\Services\LoanPenaltyService;
 use App\Exports\CustomerBulkUploadSampleExport;
 use App\Exports\CustomerBulkUploadFailedExport;
 use App\Jobs\BulkCustomerUploadJob;
+use App\Jobs\BulkCustomerUploadChunkJob;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Spatie\Permission\Models\Role;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Vinkla\Hashids\Facades\Hashids;
 use Yajra\DataTables\Facades\DataTables;
 use Maatwebsite\Excel\Facades\Excel;
@@ -813,201 +815,62 @@ class CustomerController extends Controller
                 return back()->withErrors(['csv_file' => 'No data rows found in the file.']);
             }
 
-            // Process data in chunks of 20
-            $chunkSize = 20;
+            // Large imports (e.g. 5000 rows) must run on queue to avoid 504 timeouts.
+            $totalRows = count($data);
+            $chunkSize = 200;
             $chunks = array_chunk($data, $chunkSize);
             $totalChunks = count($chunks);
-            $totalRows = count($data);
 
-            // Process synchronously in chunks for immediate results
-            // This ensures data is saved immediately without requiring queue worker
-            $successCount = 0;
-            $errorCount = 0;
-            $skippedDuplicateBankAccounts = 0;
-            $errors = [];
-            $failedRecords = [];
-            $seenBankAccounts = [];
+            $importId = 'cust_import_' . auth()->id() . '_' . time();
+            Cache::put($importId, [
+                'status' => 'processing',
+                'current' => 0,
+                'total' => $totalRows,
+                'success' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+                'percentage' => 0,
+            ], 3600);
 
-            DB::beginTransaction();
-            
-            try {
-                foreach ($chunks as $chunkIndex => $chunk) {
-                    Log::info("Processing chunk {$chunkIndex} of {$totalChunks}", [
-                        'chunk_size' => count($chunk),
-                        'user_id' => auth()->id()
-                    ]);
-                    
-                    foreach ($chunk as $rowIndex => $rowData) {
-                        try {
-                            // Validate required fields
-                            if (
-                                empty($rowData['name']) ||
-                                empty($rowData['bank_name']) ||
-                                empty($rowData['bank_account']) ||
-                                empty($rowData['phone1']) ||
-                                empty($rowData['sex']) ||
-                                empty($rowData['region_id']) ||
-                                empty($rowData['district_id'])
-                            ) {
-                                throw new \Exception("Missing required fields");
-                            }
-
-                            // Validate sex
-                            if (!in_array(strtoupper($rowData['sex']), ['M', 'F'])) {
-                                throw new \Exception("Sex must be M or F");
-                            }
-
-                            // Handle region and district - convert names to IDs if provided
-                            $regionId = null;
-                            $districtId = null;
-
-                            if (!empty($rowData['region_id'])) {
-                                if (is_numeric($rowData['region_id'])) {
-                                    $regionId = $rowData['region_id'];
-                                } else {
-                                    $region = Region::where('name', trim($rowData['region_id']))->first();
-                                    $regionId = $region ? $region->id : null;
-                                }
-                            }
-
-                            if (!empty($rowData['district_id'])) {
-                                if (is_numeric($rowData['district_id'])) {
-                                    $districtId = $rowData['district_id'];
-                                } else {
-                                    $district = District::where('name', trim($rowData['district_id']))->first();
-                                    $districtId = $district ? $district->id : null;
-                                }
-                            }
-
-                            // Format phone number
-                            $phone1 = $this->formatPhoneNumber(trim($rowData['phone1']));
-                            $phone2 = !empty($rowData['phone2']) ? $this->formatPhoneNumber(trim($rowData['phone2'])) : null;
-
-                            // All bulk-imported customers are Borrowers (company policy)
-                            $category = 'Borrower';
-
-                            // Enforce uniqueness of bank+account (keep first, skip duplicates)
-                            $bankName = strtoupper(trim((string) $rowData['bank_name']));
-                            $bankAccount = trim((string) $rowData['bank_account']);
-                            $bankKey = $bankName . '|' . $bankAccount;
-
-                            if (isset($seenBankAccounts[$bankKey])) {
-                                $skippedDuplicateBankAccounts++;
-                                $failedRecords[] = array_merge($rowData, [
-                                    'row_number' => ($chunkIndex * $chunkSize) + $rowIndex + 2,
-                                    'error_reason' => "Duplicate bank/account in file (keeping first only): {$bankName} / {$bankAccount}",
-                                ]);
-                                continue;
-                            }
-
-                            // Also skip if bank+account already exists in DB
-                            $alreadyExists = Customer::query()
-                                ->where('bank_name', $bankName)
-                                ->where('bank_account', $bankAccount)
-                                ->exists();
-
-                            if ($alreadyExists) {
-                                $skippedDuplicateBankAccounts++;
-                                $failedRecords[] = array_merge($rowData, [
-                                    'row_number' => ($chunkIndex * $chunkSize) + $rowIndex + 2,
-                                    'error_reason' => "Duplicate bank/account already exists (skipped): {$bankName} / {$bankAccount}",
-                                ]);
-                                continue;
-                            }
-                            $seenBankAccounts[$bankKey] = true;
-
-                            // Create customer data
-                            $customerData = [
-                                'name' => trim($rowData['name']),
-                                'bank_name' => $bankName,
-                                'bank_account' => $bankAccount,
-                                'phone1' => $phone1,
-                                'phone2' => $phone2,
-                                'dob' => !empty($rowData['dob']) ? $rowData['dob'] : null,
-                                'sex' => strtoupper($rowData['sex']),
-                                'region_id' => $regionId,
-                                'district_id' => $districtId,
-                                'work' => trim($rowData['work'] ?? ''),
-                                'workAddress' => trim($rowData['workaddress'] ?? $rowData['workAddress'] ?? ''),
-                                'idType' => trim($rowData['idtype'] ?? $rowData['idType'] ?? ''),
-                                'idNumber' => trim($rowData['idnumber'] ?? $rowData['idNumber'] ?? ''),
-                                'relation' => trim($rowData['relation'] ?? ''),
-                                'description' => trim($rowData['description'] ?? ''),
-                                'customerNo' => 100000 + (Customer::max('id') ?? 0) + 1,
-                                'password' => Hash::make('1234567890'),
-                                'branch_id' => auth()->user()->branch_id,
-                                'company_id' => auth()->user()->company_id,
-                                'registrar' => auth()->id(),
-                                'dateRegistered' => now()->toDateString(),
-                                'category' => $category,
-                            ];
-
-                            $customer = Customer::create($customerData);
-
-                            // Assign to individual group if not already in a group
-                            $existingMembership = DB::table('group_members')->where('customer_id', $customer->id)->first();
-                            if (!$existingMembership) {
-                                DB::table('group_members')->insert([
-                                    'group_id' => 1,
-                                    'customer_id' => $customer->id,
-                                    'status' => 'active',
-                                    'joined_date' => now()->toDateString(),
-                                    'created_at' => now(),
-                                    'updated_at' => now(),
-                                ]);
-                            }
-
-                            $successCount++;
-                        } catch (\Exception $e) {
-                            $errorMsg = "Row " . (($chunkIndex * $chunkSize) + $rowIndex + 2) . ": " . $e->getMessage();
-                            $errors[] = $errorMsg;
-                            $failedRecords[] = array_merge($rowData, [
-                                'row_number' => ($chunkIndex * $chunkSize) + $rowIndex + 2,
-                                'error_reason' => $errorMsg
-                            ]);
-                            $errorCount++;
-                            Log::error('Failed to create customer in bulk upload', [
-                                'row_data' => $rowData,
-                                'error' => $e->getMessage()
-                            ]);
-                        }
-                    }
-                }
-
-                if ($errorCount > 0) {
-                    DB::rollBack();
-                    
-                    // Store failed records in session for export
-                    $failedExportKey = 'failed_customer_upload_' . time();
-                    session([$failedExportKey => $failedRecords]);
-                    
-                    return back()
-                        ->withErrors(['csv_file' => "Upload completed with errors. {$errorCount} rows failed, {$successCount} rows succeeded."])
-                        ->with('upload_errors', $errors)
-                        ->with('failed_export_key', $failedExportKey)
-                        ->with('failed_count', $errorCount);
-                }
-
-                DB::commit();
-
-                $message = "Successfully uploaded {$successCount} customers.";
-                if ($skippedDuplicateBankAccounts > 0) {
-                    $message .= " Skipped {$skippedDuplicateBankAccounts} duplicate bank/account row(s).";
-                }
-
-                return redirect()->route('customers.index')->with('success', $message);
-            } catch (\Exception $e) {
-                DB::rollBack();
-                Log::error('Bulk customer upload failed', [
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-                return back()->withErrors(['csv_file' => 'Failed to process file: ' . $e->getMessage()]);
+            foreach ($chunks as $chunkIndex => $chunk) {
+                dispatch(new BulkCustomerUploadChunkJob(
+                    $chunk,
+                    (int) auth()->id(),
+                    (int) auth()->user()->branch_id,
+                    (int) auth()->user()->company_id,
+                    $importId,
+                    $chunkIndex,
+                    $totalChunks,
+                    (int) ($headerRowIndex ?? 0)
+                ));
             }
+
+            if ($request->ajax()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Upload started. Processing in background...',
+                    'import_id' => $importId,
+                ]);
+            }
+
+            return back()->with('success', 'Upload started. Processing in background...')->with('import_id', $importId);
         } catch (\Exception $e) {
             DB::rollBack();
             return back()->withErrors(['csv_file' => 'Failed to process file: ' . $e->getMessage()]);
         }
+    }
+
+    public function getBulkUploadProgress(Request $request)
+    {
+        $importId = $request->get('import_id');
+        if (!$importId) {
+            return response()->json(['error' => 'import_id is required'], 400);
+        }
+        $progress = Cache::get($importId);
+        if (!$progress) {
+            return response()->json(['status' => 'not_found'], 404);
+        }
+        return response()->json($progress);
     }
     
     // Download failed records export

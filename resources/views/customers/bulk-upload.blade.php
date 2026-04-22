@@ -167,35 +167,39 @@
             const form = document.querySelector('#bulkUploadForm');
             const submitBtn = document.querySelector('#submitBtn');
             const submitText = document.querySelector('#submitText');
+            const progressContainer = document.getElementById('progressContainer');
 
             // Handle form submission with progress bar
             form.addEventListener('submit', function (e) {
+                e.preventDefault();
+
                 const fileInput = document.getElementById('csv_file');
                 const file = fileInput.files[0];
-                
-                if (!file) {
-                    return;
-                }
-                
-                // Show progress bar
-                document.getElementById('progressContainer').style.display = 'block';
+                if (!file) return;
+
+                progressContainer.style.display = 'block';
                 submitBtn.disabled = true;
-                submitText.textContent = 'Uploading...';
-                submitBtn.innerHTML = '<i class="bx bx-loader-alt bx-spin me-1"></i>Uploading...';
-                
-                // Simulate progress (actual progress would come from server via AJAX)
-                let progress = 0;
-                const progressInterval = setInterval(function() {
-                    progress += 5;
-                    if (progress > 90) {
-                        clearInterval(progressInterval);
-                        progress = 90; // Don't go to 100% until server responds
+                submitBtn.innerHTML = '<i class="bx bx-loader-alt bx-spin me-1"></i>Starting...';
+
+                const formData = new FormData(form);
+
+                fetch(form.action, {
+                    method: 'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    body: formData
+                })
+                .then(r => r.json())
+                .then(resp => {
+                    if (!resp || !resp.import_id) {
+                        throw new Error(resp && resp.message ? resp.message : 'Upload started but no import_id returned.');
                     }
-                    updateProgress(progress);
-                }, 200);
-                
-                // Store interval to clear on form submit completion
-                form.dataset.progressInterval = progressInterval;
+                    pollProgress(resp.import_id);
+                })
+                .catch(err => {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = '<i class="bx bx-upload me-1"></i>Upload Customers';
+                    alert(err.message || 'Upload failed');
+                });
             });
             
             function updateProgress(percent) {
@@ -207,6 +211,30 @@
                 progressBar.setAttribute('aria-valuenow', percent);
                 progressBarText.textContent = Math.round(percent) + '%';
                 progressPercent.textContent = Math.round(percent) + '%';
+            }
+
+            function pollProgress(importId) {
+                const url = "{{ route('customers.bulk-upload.progress') }}" + "?import_id=" + encodeURIComponent(importId);
+                const tick = () => {
+                    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                        .then(r => r.json())
+                        .then(p => {
+                            const pct = p.percentage ?? 0;
+                            updateProgress(pct);
+                            submitBtn.innerHTML = `<i class="bx bx-loader-alt bx-spin me-1"></i>Processing... (${p.current || 0}/${p.total || 0})`;
+
+                            if (p.status === 'completed') {
+                                updateProgress(100);
+                                submitBtn.disabled = false;
+                                submitBtn.innerHTML = '<i class="bx bx-upload me-1"></i>Upload Customers';
+                                window.location.reload();
+                                return;
+                            }
+                            setTimeout(tick, 800);
+                        })
+                        .catch(() => setTimeout(tick, 1200));
+                };
+                tick();
             }
         });
     </script>
