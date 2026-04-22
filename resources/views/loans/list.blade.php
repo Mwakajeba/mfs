@@ -85,6 +85,10 @@
                                                 data-bs-target="#importModal">
                                                 <i class="bx bx-import"></i> Import Loans
                                             </button>
+                                            <button class="btn btn-outline-primary" data-bs-toggle="modal"
+                                                data-bs-target="#bulkRepaymentsModal">
+                                                <i class="bx bx-receipt"></i> Bulk Repayments
+                                            </button>
                                             @if(isset($status) && $status === 'applied')
                                                 <a href="{{ route('loans.application.create') }}" class="btn btn-primary">
                                                     <i class="bx bx-plus"></i> Create Loan Application
@@ -287,6 +291,61 @@
                                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                                 <button type="submit" class="btn btn-success">
                                     <i class="bx bx-import"></i> Import Loans
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bulk Repayments Modal -->
+            <div class="modal fade" id="bulkRepaymentsModal" tabindex="-1" aria-labelledby="bulkRepaymentsModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="bulkRepaymentsModalLabel">Bulk Repayments</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <form action="{{ route('repayments.bulk-import') }}" method="POST" enctype="multipart/form-data">
+                            @csrf
+                            <div class="modal-body">
+                                <div class="alert alert-info">
+                                    <i class="bx bx-info-circle me-2"></i>
+                                    <strong>Instructions:</strong>
+                                    <ul class="mb-0 mt-2">
+                                        <li>Upload an Excel/CSV file with columns: <strong>Date</strong>, <strong>Reference</strong>, <strong>Amount</strong></li>
+                                        <li><strong>Reference</strong> must match the loan <strong>Reference</strong> saved on the loan.</li>
+                                        <li>Date format: <strong>YYYY-MM-DD</strong> (or Excel date).</li>
+                                    </ul>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="bulk_repayment_bank_account_id" class="form-label">Bank Account <span class="text-danger">*</span></label>
+                                        <select class="form-select" name="bank_account_id" id="bulk_repayment_bank_account_id" required>
+                                            <option value="">-- Select Bank Account --</option>
+                                            @foreach($bankAccounts ?? [] as $bankAccount)
+                                                <option value="{{ $bankAccount->id }}">{{ $bankAccount->account_number }} - {{ $bankAccount->name }}</option>
+                                            @endforeach
+                                        </select>
+                                        <div class="form-text">This account will be used for all imported repayments.</div>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label for="bulk_repayment_file" class="form-label">Select Excel/CSV File <span class="text-danger">*</span></label>
+                                        <input type="file" class="form-control" id="bulk_repayment_file" name="repayment_file" accept=".xlsx,.xls,.csv,.txt" required>
+                                        <div class="form-text">Supported: Excel (.xlsx, .xls), CSV, TXT</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <div class="me-auto">
+                                    <a href="{{ route('repayments.bulk-template') }}" class="btn btn-outline-secondary btn-sm">
+                                        <i class="bx bx-download"></i> Download Sample Template
+                                    </a>
+                                </div>
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bx bx-upload"></i> Import Repayments
                                 </button>
                             </div>
                         </form>

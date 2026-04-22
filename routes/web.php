@@ -1049,6 +1049,9 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/repayments/remove-penalty/{scheduleId}', [LoanRepaymentController::class, 'removePenalty'])->name('repayments.remove-penalty');
     Route::post('/repayments/calculate-schedule/{loanId}', [LoanRepaymentController::class, 'calculateSchedule'])->name('repayments.calculate-schedule');
     Route::post('/repayments/bulk', [LoanRepaymentController::class, 'bulkRepayment'])->name('repayments.bulk');
+    // IMPORTANT: must be multi-segment to avoid POST /repayments/{encodedId} catch-all
+    Route::get('/repayments/bulk/template', [LoanRepaymentController::class, 'downloadBulkTemplate'])->name('repayments.bulk-template');
+    Route::post('/repayments/bulk/import', [LoanRepaymentController::class, 'bulkImportByReference'])->name('repayments.bulk-import');
     Route::delete('/repayments/bulk-delete', [LoanRepaymentController::class, 'bulkDestroy'])->name('repayments.bulk-delete');
 
     // Repayment CRUD Routes

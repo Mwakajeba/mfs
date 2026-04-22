@@ -10,11 +10,15 @@ use App\Models\Receipt;
 use App\Models\ReceiptItem;
 use App\Models\GlTransaction;
 use App\Services\LoanRepaymentService;
+use App\Exports\BulkRepaymentTemplateExport;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
+use Maatwebsite\Excel\Facades\Excel;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 
 class LoanRepaymentController extends Controller
 {
@@ -153,6 +157,207 @@ class LoanRepaymentController extends Controller
 
             return redirect()->back()->with('error', 'Failed to record repayment: ' . $e->getMessage());
         }
+    }
+
+    public function downloadBulkTemplate()
+    {
+        return Excel::download(new BulkRepaymentTemplateExport(), 'bulk_repayments_template.xlsx');
+    }
+
+    /**
+     * Bulk repayments import: expects columns Date, Reference, Amount.
+     * Finds loans by Loan.reference = reference from file.
+     */
+    public function bulkImportByReference(Request $request)
+    {
+        $request->validate([
+            'bank_account_id' => 'required|exists:bank_accounts,id',
+            'repayment_file' => 'required|file|mimes:csv,txt,xlsx,xls',
+        ]);
+
+        $bankAccount = BankAccount::findOrFail($request->bank_account_id);
+
+        // Validate bank account is accessible by user's branches or global scope
+        $user = Auth::user();
+        $userBranchIds = $user->branches()->pluck('branches.id')->toArray();
+        $currentBranchId = function_exists('current_branch_id') ? current_branch_id() : null;
+        if (!$currentBranchId) {
+            $currentBranchId = $user->branch_id;
+        }
+
+        $hasDirectScope = $bankAccount->is_all_branches
+            || ($currentBranchId && (int) $bankAccount->branch_id === (int) $currentBranchId);
+
+        if (!empty($userBranchIds) && !$hasDirectScope) {
+            return redirect()->back()->withErrors(['bank_account_id' => 'You do not have access to this bank account.']);
+        }
+
+        $path = $request->file('repayment_file')->getRealPath();
+        if (!$path || !file_exists($path)) {
+            return redirect()->back()->withErrors(['repayment_file' => 'Unable to read uploaded file.']);
+        }
+
+        $extension = strtolower($request->file('repayment_file')->getClientOriginalExtension());
+        $rows = [];
+
+        if (in_array($extension, ['xlsx', 'xls'], true)) {
+            $spreadsheet = IOFactory::load($path);
+            $worksheet = $spreadsheet->getActiveSheet();
+            $rows = $worksheet->toArray();
+        } else {
+            $rows = array_map('str_getcsv', file($path));
+        }
+
+        if (empty($rows)) {
+            return redirect()->back()->withErrors(['repayment_file' => 'File is empty.']);
+        }
+
+        // Find header row
+        $header = [];
+        $headerRowIndex = null;
+        for ($i = 0; $i < min(20, count($rows)); $i++) {
+            $potentialHeader = array_map(function ($cell) {
+                return strtolower(trim((string) ($cell ?? '')));
+            }, $rows[$i]);
+
+            $normalizedHeader = array_map(function ($col) {
+                $col = strtolower(trim((string) $col));
+                $col = preg_replace('/\s+/', '', $col);
+                $col = preg_replace('/[^a-z0-9_]/', '', $col);
+
+                $variations = [
+                    'date' => ['date', 'paymentdate', 'payment_date', 'paiddate'],
+                    'reference' => ['reference', 'ref', 'loanreference', 'loan_ref'],
+                    'amount' => ['amount', 'paidamount', 'paymentamount', 'payment_amount'],
+                ];
+
+                foreach ($variations as $standard => $aliases) {
+                    if (in_array($col, $aliases, true)) {
+                        return $standard;
+                    }
+                }
+
+                return $col;
+            }, $potentialHeader);
+
+            if (in_array('date', $normalizedHeader, true) && in_array('reference', $normalizedHeader, true) && in_array('amount', $normalizedHeader, true)) {
+                $header = $normalizedHeader;
+                $headerRowIndex = $i;
+                break;
+            }
+        }
+
+        if (!$header) {
+            return redirect()->back()->withErrors([
+                'repayment_file' => 'Could not find header row. Required columns: Date, Reference, Amount.',
+            ]);
+        }
+
+        $dataRows = array_slice($rows, $headerRowIndex + 1);
+        $bankChartAccount = $bankAccount->chart_account_id;
+
+        $successCount = 0;
+        $errorCount = 0;
+        $errors = [];
+
+        foreach ($dataRows as $idx => $row) {
+            $rowNumber = $headerRowIndex + 2 + $idx; // 1-indexed + header + start at next row
+
+            $rowData = [];
+            foreach ($header as $colIndex => $name) {
+                $rowData[$name] = $row[$colIndex] ?? null;
+            }
+
+            $reference = trim((string) ($rowData['reference'] ?? ''));
+            $amountRaw = $rowData['amount'] ?? null;
+            $dateRaw = $rowData['date'] ?? null;
+
+            if ($reference === '' && ($amountRaw === null || trim((string) $amountRaw) === '') && ($dateRaw === null || trim((string) $dateRaw) === '')) {
+                continue; // skip empty row
+            }
+
+            if ($reference === '') {
+                $errorCount++;
+                $errors[] = "Row {$rowNumber}: Missing Reference.";
+                continue;
+            }
+
+            if (!is_numeric($amountRaw) || (float) $amountRaw <= 0) {
+                $errorCount++;
+                $errors[] = "Row {$rowNumber}: Invalid Amount.";
+                continue;
+            }
+
+            $paymentDate = null;
+            if (is_numeric($dateRaw)) {
+                try {
+                    $paymentDate = Carbon::instance(ExcelDate::excelToDateTimeObject((float) $dateRaw))->format('Y-m-d');
+                } catch (\Throwable $t) {
+                    $errorCount++;
+                    $errors[] = "Row {$rowNumber}: Invalid Date (Excel serial).";
+                    continue;
+                }
+            } else {
+                try {
+                    $paymentDate = Carbon::createFromFormat('Y-m-d', trim((string) $dateRaw))->format('Y-m-d');
+                } catch (\Throwable $t) {
+                    $errorCount++;
+                    $errors[] = "Row {$rowNumber}: Invalid Date (expected YYYY-MM-DD).";
+                    continue;
+                }
+            }
+
+            $loans = Loan::where('reference', $reference)->get(['id']);
+            if ($loans->isEmpty()) {
+                $errorCount++;
+                $errors[] = "Row {$rowNumber}: No loan found with reference '{$reference}'.";
+                continue;
+            }
+            if ($loans->count() > 1) {
+                $errorCount++;
+                $errors[] = "Row {$rowNumber}: Multiple loans found with reference '{$reference}'.";
+                continue;
+            }
+
+            $loanId = (int) $loans->first()->id;
+
+            try {
+                $loan = Loan::with('product')->findOrFail($loanId);
+                $calculationMethod = $loan->product->interest_method ?? 'flat_rate';
+
+                $paymentData = [
+                    'payment_date' => $paymentDate,
+                    'bank_account_id' => $bankAccount->id,
+                    'bank_chart_account_id' => $bankChartAccount,
+                ];
+
+                $this->repaymentService->processRepayment(
+                    $loanId,
+                    (float) $amountRaw,
+                    $paymentData,
+                    $calculationMethod
+                );
+
+                $successCount++;
+            } catch (\Exception $e) {
+                $errorCount++;
+                $errors[] = "Row {$rowNumber}: {$e->getMessage()}";
+            }
+        }
+
+        if ($errorCount > 0 && $successCount > 0) {
+            return redirect()->back()
+                ->with('warning', "Bulk repayments completed with issues. Success: {$successCount}. Failed: {$errorCount}.")
+                ->with('import_errors', array_slice($errors, 0, 200));
+        }
+
+        if ($errorCount > 0) {
+            return redirect()->back()->withErrors([
+                'repayment_file' => "Bulk repayments failed. Failed rows: {$errorCount}. First error: " . ($errors[0] ?? 'Unknown error'),
+            ]);
+        }
+
+        return redirect()->back()->with('success', "Bulk repayments imported successfully. Total: {$successCount}.");
     }
 
     /**

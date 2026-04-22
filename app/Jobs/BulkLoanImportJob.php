@@ -20,6 +20,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 class BulkLoanImportJob implements ShouldQueue
 {
@@ -514,34 +515,69 @@ class BulkLoanImportJob implements ShouldQueue
 
         $disbursementAmount = $validated['amount'] - $releaseFeeTotal;
 
-        GlTransaction::insert([
-            [
+        // GL Transactions: support both schema styles:
+        // (A) debit/credit + transaction_date + reference_id/reference_type (+optional company_id)
+        // (B) amount + nature + date + transaction_id/transaction_type
+        $hasDebitCreditSchema = Schema::hasColumn('gl_transactions', 'debit') && Schema::hasColumn('gl_transactions', 'credit');
+        $hasAmountNatureSchema = Schema::hasColumn('gl_transactions', 'amount') && Schema::hasColumn('gl_transactions', 'nature');
+
+        if ($hasDebitCreditSchema) {
+            $glBase = [
                 'transaction_date' => $validated['date_applied'],
+                'description' => $notes,
+                'reference_type' => 'Loan',
+                'reference_id' => $loan->id,
+                'branch_id' => $this->branchId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+
+            if (Schema::hasColumn('gl_transactions', 'company_id')) {
+                $glBase['company_id'] = User::where('id', $this->userId)->value('company_id');
+            }
+
+            GlTransaction::insert([
+                array_merge($glBase, [
+                    'chart_account_id' => $this->chartAccountId,
+                    'debit' => $validated['amount'],
+                    'credit' => 0,
+                ]),
+                array_merge($glBase, [
+                    'chart_account_id' => $principalReceivable,
+                    'debit' => 0,
+                    'credit' => $validated['amount'],
+                ]),
+            ]);
+        } elseif ($hasAmountNatureSchema) {
+            $glBase = [
                 'chart_account_id' => $this->chartAccountId,
-                'debit' => $validated['amount'],
-                'credit' => 0,
+                'customer_id' => $validated['customer_id'] ?? null,
+                'transaction_id' => $loan->id,
+                'transaction_type' => 'Loan',
+                'date' => $validated['date_applied'],
                 'description' => $notes,
-                'reference_type' => 'Loan',
-                'reference_id' => $loan->id,
                 'branch_id' => $this->branchId,
-                'company_id' => auth()->user()->company_id,
+                'user_id' => $this->userId,
                 'created_at' => now(),
                 'updated_at' => now(),
-            ],
-            [
-                'transaction_date' => $validated['date_applied'],
-                'chart_account_id' => $principalReceivable,
-                'debit' => 0,
-                'credit' => $validated['amount'],
-                'description' => $notes,
-                'reference_type' => 'Loan',
-                'reference_id' => $loan->id,
-                'branch_id' => $this->branchId,
-                'company_id' => auth()->user()->company_id,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ],
-        ]);
+            ];
+
+            // Debit bank/cash account
+            GlTransaction::insert([
+                array_merge($glBase, [
+                    'chart_account_id' => $this->chartAccountId,
+                    'amount' => $validated['amount'],
+                    'nature' => 'debit',
+                ]),
+                array_merge($glBase, [
+                    'chart_account_id' => $principalReceivable,
+                    'amount' => $validated['amount'],
+                    'nature' => 'credit',
+                ]),
+            ]);
+        } else {
+            throw new \Exception('Unsupported gl_transactions schema: missing expected columns.');
+        }
 
         return $loan;
     }
