@@ -12,17 +12,31 @@ use App\Models\Journal;
 use App\Models\Payment;
 use App\Models\Penalty;
 use App\Models\Receipt;
-use App\Models\Complain;
 use App\Services\LoanPenaltyService;
+use App\Models\Loan;
+use App\Models\LoanSchedule;
+use App\Models\Repayment;
+use Carbon\Carbon;
 
 class DashboardController extends Controller
 {
     /**
      * Endpoint for monthly collections (expected, collected, arrears) for current year
      */
-    public function monthlyCollections()
+    public function monthlyCollections(Request $request)
     {
         $year = now()->year;
+        $company = auth()->user()->company;
+        $user = auth()->user();
+
+        $branchParam = $request->input('branch_id');
+        $selectedBranchId = ($branchParam === null || $branchParam === '') ? null : (int) $branchParam;
+
+        $userBranchIds = $user->branches()->where('company_id', $company->id)->pluck('branches.id')->toArray();
+        if (empty($userBranchIds)) {
+            $userBranchIds = \App\Models\Branch::where('company_id', $company->id)->pluck('id')->toArray();
+        }
+
         $months = [];
         $expected = [];
         $collected = [];
@@ -30,20 +44,36 @@ class DashboardController extends Controller
         for ($m = 1; $m <= 12; $m++) {
             $monthLabel = date('M', mktime(0, 0, 0, $m, 1));
             $months[] = $monthLabel;
-            // Expected: sum of all schedules due in this month (no branch/company filter)
-            $exp = \App\Models\LoanSchedule::whereYear('due_date', $year)
-                ->whereMonth('due_date', $m)
-                ->sum('principal');
-            $exp += \App\Models\LoanSchedule::whereYear('due_date', $year)
-                ->whereMonth('due_date', $m)
-                ->sum('interest');
-            $expected[] = $exp;
-            // Collected: sum of repayments made for schedules due in this month (no branch/company filter)
-            $repayments = \DB::table('repayments')
-                ->join('loan_schedules', 'repayments.loan_schedule_id', '=', 'loan_schedules.id')
+            // Expected: sum of schedules due in this month for ACTIVE loans in selected/user branches
+            $exp = (float) DB::table('loan_schedules')
+                ->join('loans', 'loan_schedules.loan_id', '=', 'loans.id')
+                ->join('branches', 'loans.branch_id', '=', 'branches.id')
+                ->where('branches.company_id', $company->id)
+                ->where('loans.status', \App\Models\Loan::STATUS_ACTIVE)
                 ->whereYear('loan_schedules.due_date', $year)
                 ->whereMonth('loan_schedules.due_date', $m)
-                ->sum(\DB::raw('repayments.principal + repayments.interest'));
+                ->when($selectedBranchId, function ($q) use ($selectedBranchId) {
+                    return $q->where('loans.branch_id', $selectedBranchId);
+                }, function ($q) use ($userBranchIds) {
+                    return $q->whereIn('loans.branch_id', $userBranchIds);
+                })
+                ->sum(DB::raw('loan_schedules.principal + loan_schedules.interest'));
+            $expected[] = $exp;
+            // Collected: repayments for schedules due in this month (ACTIVE loans only), same branch filter
+            $repayments = (float) DB::table('repayments')
+                ->join('loan_schedules', 'repayments.loan_schedule_id', '=', 'loan_schedules.id')
+                ->join('loans', 'loan_schedules.loan_id', '=', 'loans.id')
+                ->join('branches', 'loans.branch_id', '=', 'branches.id')
+                ->where('branches.company_id', $company->id)
+                ->where('loans.status', \App\Models\Loan::STATUS_ACTIVE)
+                ->whereYear('loan_schedules.due_date', $year)
+                ->whereMonth('loan_schedules.due_date', $m)
+                ->when($selectedBranchId, function ($q) use ($selectedBranchId) {
+                    return $q->where('loans.branch_id', $selectedBranchId);
+                }, function ($q) use ($userBranchIds) {
+                    return $q->whereIn('loans.branch_id', $userBranchIds);
+                })
+                ->sum(DB::raw('repayments.principal + repayments.interest'));
             $collected[] = $repayments;
             // Arrears: expected - collected
             $arrears[] = max(0, $exp - $repayments);
@@ -385,22 +415,54 @@ class DashboardController extends Controller
 
         $penaltyBalance = LoanPenaltyService::getTotalPenaltyBalance($selectedBranchId);
 
+        // =========================
+        // Loan-focused dashboard KPIs (ACTIVE loans only)
+        // =========================
+        $activeLoansQuery = Loan::query()
+            ->whereHas('branch', function ($query) use ($company) {
+                $query->where('company_id', $company->id);
+            })
+            ->when($selectedBranchId, function ($query) use ($selectedBranchId) {
+                return $query->where('branch_id', $selectedBranchId);
+            }, function ($query) use ($userBranchIds) {
+                return $query->whereIn('branch_id', $userBranchIds);
+            })
+            ->where('status', Loan::STATUS_ACTIVE);
+
+        $principalDisbursed = (clone $activeLoansQuery)->sum('amount');
+        $interestExpected = (clone $activeLoansQuery)->sum('interest_amount');
+        $totalLoansExpected = $principalDisbursed + $interestExpected;
+
+        // Collected (all-time) for active loans
+        $principalCollected = (float) DB::table('repayments')
+            ->join('loans', 'repayments.loan_id', '=', 'loans.id')
+            ->where('loans.status', Loan::STATUS_ACTIVE)
+            ->when($selectedBranchId, function ($q) use ($selectedBranchId) {
+                return $q->where('loans.branch_id', $selectedBranchId);
+            }, function ($q) use ($userBranchIds) {
+                return $q->whereIn('loans.branch_id', $userBranchIds);
+            })
+            ->sum('repayments.principal');
+
+        $interestCollected = (float) DB::table('repayments')
+            ->join('loans', 'repayments.loan_id', '=', 'loans.id')
+            ->where('loans.status', Loan::STATUS_ACTIVE)
+            ->when($selectedBranchId, function ($q) use ($selectedBranchId) {
+                return $q->where('loans.branch_id', $selectedBranchId);
+            }, function ($q) use ($userBranchIds) {
+                return $q->whereIn('loans.branch_id', $userBranchIds);
+            })
+            ->sum('repayments.interest');
+
+        // Outstanding principal/interest (active loans only), computed to reconcile with disbursed/collected.
+        // Using schedules here can introduce rounding drift (e.g. 0.01) due to installment splitting.
+        $outstandingPrincipalActive = max(0, (float) $principalDisbursed - (float) $principalCollected);
+        $outstandingInterestActive = max(0, (float) $interestExpected - (float) $interestCollected);
+
+        $totalOutstanding = $outstandingPrincipalActive + $outstandingInterestActive + (float) $penaltyBalance;
+
         // Get previous year comparative data
         $previousYearData = $this->getPreviousYearData($selectedBranchId, $userBranchIds);
-
-        // Get complaints count (pending complaints for current branch/company)
-        $complaintsQuery = Complain::whereHas('branch', function($q) use ($company) {
-            $q->where('company_id', $company->id);
-        });
-        
-        if ($selectedBranchId) {
-            $complaintsQuery->where('branch_id', $selectedBranchId);
-        } elseif (!empty($userBranchIds)) {
-            $complaintsQuery->whereIn('branch_id', $userBranchIds);
-        }
-        
-        $pendingComplaintsCount = (clone $complaintsQuery)->where('status', 'pending')->count();
-        $totalComplaintsCount = $complaintsQuery->count();
 
         return view('dashboard', compact(
             'balanceSheetData',
@@ -425,10 +487,17 @@ class DashboardController extends Controller
             'outstandingInterestDetailed',
             'officerTotalPortfolio',
             'officerTotalArrears',
+            'principalDisbursed',
+            'interestExpected',
+            'totalLoansExpected',
+            'principalCollected',
+            'interestCollected',
+            'outstandingPrincipalActive',
+            'outstandingInterestActive',
+            'totalOutstanding',
             'branches',
             'selectedBranchId',
-            'pendingComplaintsCount',
-            'totalComplaintsCount'
+            // complaints removed from dashboard
         ));
     }
     

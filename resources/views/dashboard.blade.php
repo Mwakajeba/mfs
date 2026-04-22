@@ -164,146 +164,122 @@ use Vinkla\Hashids\Facades\Hashids;
             </div>
             @endcan
 
-
-            @can('view journals')
-            <div class="col">
-                <div class="card radius-10">
-                    <div class="card-body">
-                        <div class="d-flex align-items-center">
-                            <div class="flex-grow-1">
-                                <p class="mb-0">Total Journals</p>
-                                <h4 class="font-weight-bold">{{ $recentJournals->count() > 0 ? $recentJournals->count() : 0 }}</h4>
-                                <p class="text-success mb-0 font-13">This month</p>
-                            </div>
-                            <div class="widgets-icons bg-gradient-cosmic text-white"><i class='bx bx-book-open'></i></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            @endcan
-            @can('view payments')
-            <div class="col">
-                <div class="card radius-10">
-                    <div class="card-body">
-                        <div class="d-flex align-items-center">
-                            <div class="flex-grow-1">
-                                <p class="mb-0">Total Payments</p>
-                                <h4 class="font-weight-bold">TZS {{ number_format($totalPaymentsThisMonth ?? 0, 2) }}</h4>
-                                <p class="text-secondary mb-0 font-13">This month</p>
-                            </div>
-                            <div class="widgets-icons bg-gradient-burning text-white"><i class='bx bx-money'></i></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            @endcan
-            @can('view receipts')
-            <div class="col">
-                <div class="card radius-10">
-                    <div class="card-body">
-                        <div class="d-flex align-items-center">
-                            <div class="flex-grow-1">
-                                <p class="mb-0">Total Receipts</p>
-                                <h4 class="font-weight-bold">TZS {{ number_format($totalReceiptsThisMonth ?? 0, 2) }}</h4>
-                                <p class="text-secondary mb-0 font-13">This month</p>
-                            </div>
-                            <div class="widgets-icons bg-gradient-lush text-white"><i class='bx bx-receipt'></i></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            @endcan
-            <!-- Loan Stats Cards -->
+            <!-- Loan KPIs (Active loans only) -->
             @can('view loans')
             <div class="col">
                 <div class="card radius-10">
                     <div class="card-body">
                         <div class="d-flex align-items-center">
                             <div class="flex-grow-1">
-                                <p class="mb-0">Total Loan Amount</p>
-                                <h4 class="font-weight-bold">TZS {{ number_format($totalLoanAmount ?? 0, 2) }}</h4>
+                                <p class="mb-0 text-muted">Principal Disbursed</p>
+                                <h4 class="font-weight-bold">TZS {{ number_format($principalDisbursed ?? 0, 2) }}</h4>
                             </div>
                             <div class="widgets-icons bg-gradient-blues text-white"><i class='bx bx-wallet'></i></div>
                         </div>
                     </div>
                 </div>
             </div>
-            @endcan
-            @can('view loans')
+
             <div class="col">
                 <div class="card radius-10">
                     <div class="card-body">
                         <div class="d-flex align-items-center">
                             <div class="flex-grow-1">
-                                <p class="mb-0">Total Principal</p>
-                                <h4 class="font-weight-bold">TZS {{ number_format($totalPrincipal ?? 0, 2) }}</h4>
-                                <p class="mb-0">Total Interest: TZS {{ number_format($totalInterest ?? 0, 2) }}</p>
+                                <p class="mb-0 text-muted">Interest Expected</p>
+                                <h4 class="font-weight-bold">TZS {{ number_format($interestExpected ?? 0, 2) }}</h4>
                             </div>
-                            <div class="widgets-icons bg-gradient-burning text-white"><i class='bx bx-money'></i></div>
+                            <div class="widgets-icons bg-gradient-burning text-white"><i class='bx bx-trending-up'></i></div>
                         </div>
                     </div>
                 </div>
             </div>
-            @endcan
-            @can('view loans')
+
             <div class="col">
                 <div class="card radius-10">
                     <div class="card-body">
                         <div class="d-flex align-items-center">
                             <div class="flex-grow-1">
-                                <p class="mb-0">Repaid Principal</p>
-                                <h4 class="font-weight-bold">TZS {{ number_format($repaidPrincipal ?? 0, 2) }}</h4>
-                                <p class="mb-0">Repaid Interest: TZS {{ number_format($repaidInterest ?? 0, 2) }}</p>
+                                <p class="mb-0 text-muted">Total Loans (Principal + Expected Interest)</p>
+                                <h4 class="font-weight-bold">TZS {{ number_format($totalLoansExpected ?? 0, 2) }}</h4>
+                            </div>
+                            <div class="widgets-icons bg-gradient-cosmic text-white"><i class='bx bx-layer'></i></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col">
+                <div class="card radius-10">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <p class="mb-0 text-muted">Principal Collected</p>
+                                <h4 class="font-weight-bold">TZS {{ number_format($principalCollected ?? 0, 2) }}</h4>
                             </div>
                             <div class="widgets-icons bg-gradient-success text-white"><i class='bx bx-check-circle'></i></div>
                         </div>
                     </div>
                 </div>
             </div>
-            @endcan
-            @can('view loans')
+
             <div class="col">
                 <div class="card radius-10">
                     <div class="card-body">
                         <div class="d-flex align-items-center">
                             <div class="flex-grow-1">
-                                <p class="mb-0">Outstanding Total</p>
-                                <h4 class="font-weight-bold">TZS {{ number_format(($outstandingPrincipal + $outstandingInterest) ?? 0, 0) }}</h4>
-                                <p class="mb-0" style="font-size: 0.75rem;">Outstanding Interest: <b>TZS {{ number_format($outstandingInterestDetailed ?? 0, 0) }}</b></p>
-                                <p class="mb-0" style="font-size: 0.75rem;">Accrued Interest: <b>TZS {{ number_format($accruedInterest ?? 0, 0) }}</b></p>
-                                <p class="mb-0" style="font-size: 0.75rem;">Not Due Interest: <b>TZS {{ number_format($notDueInterest ?? 0, 0) }}</b></p>
-                                <p class="mb-0" style="font-size: 0.75rem;">Paid Interest: <b>TZS {{ number_format($paidInterest ?? 0, 0) }}</b></p>
-                                <p class="mb-0" style="font-size: 0.75rem;">Outstanding Principal: <b>TZS {{ number_format($outstandingPrincipal ?? 0, 0) }}</b></p>
+                                <p class="mb-0 text-muted">Interest Collected</p>
+                                <h4 class="font-weight-bold">TZS {{ number_format($interestCollected ?? 0, 2) }}</h4>
+                            </div>
+                            <div class="widgets-icons bg-gradient-lush text-white"><i class='bx bx-receipt'></i></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col">
+                <div class="card radius-10">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <p class="mb-0 text-muted">Outstanding Principal</p>
+                                <h4 class="font-weight-bold">TZS {{ number_format($outstandingPrincipalActive ?? 0, 2) }}</h4>
                             </div>
                             <div class="widgets-icons bg-gradient-cosmic text-white"><i class='bx bx-hourglass'></i></div>
                         </div>
                     </div>
                 </div>
             </div>
-            @endcan
 
-            <!-- Complaints Card -->
             <div class="col">
-                <a href="{{ route('complaints.index') }}" class="text-decoration-none">
-                    <div class="card radius-10">
-                        <div class="card-body position-relative">
-                            <div class="d-flex align-items-center">
-                                <div class="flex-grow-1">
-                                    <p class="mb-0 text-muted">Complaints</p>
-                                    <h4 class="font-weight-bold text-dark">
-                                        {{ $pendingComplaintsCount ?? 0 }}
-                                    </h4>
-                                    <p class="text-warning mb-0 font-13">Pending ({{ $totalComplaintsCount ?? 0 }} total)</p>
-                                </div>
-                                <div class="widgets-icons bg-gradient-danger text-white">
-                                    <i class='bx bx-message-square-error'></i>
-                                </div>
+                <div class="card radius-10">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <p class="mb-0 text-muted">Outstanding Interest</p>
+                                <h4 class="font-weight-bold">TZS {{ number_format($outstandingInterestActive ?? 0, 2) }}</h4>
                             </div>
-                            <span class="stretched-link"></span>
+                            <div class="widgets-icons bg-gradient-burning text-white"><i class='bx bx-time-five'></i></div>
                         </div>
                     </div>
-                </a>
+                </div>
             </div>
+
+            <div class="col">
+                <div class="card radius-10">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <p class="mb-0 text-muted">Total Outstanding (Prin + Interest + Penalty)</p>
+                                <h4 class="font-weight-bold">TZS {{ number_format($totalOutstanding ?? 0, 2) }}</h4>
+                            </div>
+                            <div class="widgets-icons bg-gradient-dark text-white"><i class='bx bx-spreadsheet'></i></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            @endcan
+
+            {{-- Complaints card removed --}}
         </div>
         <!--end row-->
 
@@ -433,93 +409,106 @@ use Vinkla\Hashids\Facades\Hashids;
                         }
                     });
                 });
-        });
 
-           // Monthly Collections Grouped Bar Chart
-            fetch('/dashboard/monthly-collections')
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Monthly Collections Chart Data:', data);
-                    const ctx = document.getElementById('monthlyCollectionsChart').getContext('2d');
-                    const isEmpty = !data.months || !data.expected || !data.collected || !data.arrears ||
-                        data.months.length === 0 ||
-                        (data.expected.every(v => v == 0) && data.collected.every(v => v == 0) && data.arrears.every(v => v == 0));
-                    if (isEmpty) {
-                        document.getElementById('monthlyCollectionsChart').style.display = 'none';
-                        const fallback = document.createElement('div');
-                        fallback.style.textAlign = 'center';
-                        fallback.style.padding = '40px 0';
-                        fallback.style.color = '#888';
-                        fallback.innerHTML = '<b>No monthly collections data available for this year.</b>';
-                        ctx.canvas.parentNode.appendChild(fallback);
-                        return;
-                    }
-                    // Highlight months with no repayments by changing the collected bar color to gray
-                    const collectedColors = data.collected.map(v => v == 0 ? '#cccccc' : '#27ae60');
-                    new Chart(ctx, {
-                        type: 'bar',
-                        data: {
-                            labels: data.months,
-                            datasets: [
-                                {
-                                    label: 'Expected',
-                                    data: data.expected,
-                                    backgroundColor: '#f1c40f',
-                                    barPercentage: 0.3,
-                                    categoryPercentage: 0.6
-                                },
-                                {
-                                    label: 'Collected',
-                                    data: data.collected,
-                                    backgroundColor: collectedColors,
-                                    barPercentage: 0.3,
-                                    categoryPercentage: 0.6
-                                },
-                                {
-                                    label: 'Arrears',
-                                    data: data.arrears,
-                                    backgroundColor: '#e74c3c',
-                                    barPercentage: 0.3,
-                                    categoryPercentage: 0.6
-                                }
-                            ]
-                        },
-                        options: {
-                            responsive: true,
-                            plugins: {
-                                legend: { display: true },
-                                title: {
-                                    display: true,
-                                    text: 'Monthly Expected vs Collected vs Arrears'
-                                },
-                                tooltip: {
-                                    callbacks: {
-                                        label: function(context) {
-                                            let label = context.dataset.label || '';
-                                            let value = context.parsed;
-                                            if (label === 'Collected' && value === 0) {
-                                                return `${context.label}: No repayments`;
+            // Monthly Collections Grouped Bar Chart
+            const monthlyCollectionsCanvas = document.getElementById('monthlyCollectionsChart');
+            if (monthlyCollectionsCanvas) {
+                fetch('/dashboard/monthly-collections' + (branchId ? '?branch_id=' + branchId : ''))
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Monthly Collections Chart Data:', data);
+                        const ctx = document.getElementById('monthlyCollectionsChart').getContext('2d');
+                        const isEmpty = !data.months || !data.expected || !data.collected || !data.arrears ||
+                            data.months.length === 0 ||
+                            (data.expected.every(v => v == 0) && data.collected.every(v => v == 0) && data.arrears.every(v => v == 0));
+                        if (isEmpty) {
+                            document.getElementById('monthlyCollectionsChart').style.display = 'none';
+                            const fallback = document.createElement('div');
+                            fallback.style.textAlign = 'center';
+                            fallback.style.padding = '40px 0';
+                            fallback.style.color = '#888';
+                            fallback.innerHTML = '<b>No monthly collections data available for this year.</b>';
+                            ctx.canvas.parentNode.appendChild(fallback);
+                            return;
+                        }
+                        const datasets = [
+                            {
+                                label: 'Expected',
+                                data: data.expected,
+                                backgroundColor: '#f1c40f',
+                                barPercentage: 0.3,
+                                categoryPercentage: 0.6
+                            }
+                        ];
+
+                        const hasCollected = Array.isArray(data.collected) && data.collected.some(v => Number(v) > 0);
+                        const hasArrears = Array.isArray(data.arrears) && data.arrears.some(v => Number(v) > 0);
+
+                        if (hasCollected) {
+                            const collectedColors = data.collected.map(v => Number(v) === 0 ? '#cccccc' : '#27ae60');
+                            datasets.push({
+                                label: 'Collected',
+                                data: data.collected,
+                                backgroundColor: collectedColors,
+                                barPercentage: 0.3,
+                                categoryPercentage: 0.6
+                            });
+                        }
+
+                        if (hasArrears) {
+                            datasets.push({
+                                label: 'Arrears',
+                                data: data.arrears,
+                                backgroundColor: '#e74c3c',
+                                barPercentage: 0.3,
+                                categoryPercentage: 0.6
+                            });
+                        }
+
+                        const titleParts = ['Monthly Expected'];
+                        if (hasCollected) titleParts.push('Collected');
+                        if (hasArrears) titleParts.push('Arrears');
+
+                        new Chart(ctx, {
+                            type: 'bar',
+                            data: {
+                                labels: data.months,
+                                datasets
+                            },
+                            options: {
+                                responsive: true,
+                                plugins: {
+                                    legend: { display: true },
+                                    title: {
+                                        display: true,
+                                        text: titleParts.join(' vs ') + ' (This Year)'
+                                    },
+                                    tooltip: {
+                                        callbacks: {
+                                            label: function(context) {
+                                                let value = context.parsed;
+                                                return `${context.dataset.label}: ${value.toLocaleString()}`;
                                             }
-                                            return `${context.label}: ${value.toLocaleString()}`;
                                         }
                                     }
-                                }
-                            },
-                            scales: {
-                                x: {
-                                    stacked: true,
-                                    title: { display: true, text: 'Month' }
                                 },
-                                y: {
-                                    stacked: false,
-                                    beginAtZero: true,
-                                    title: { display: true, text: 'Amount (TZS)' }
-                                }
-                            },
-                            barThickness: 12
-                        }
+                                scales: {
+                                    x: {
+                                        stacked: false,
+                                        title: { display: true, text: 'Month' }
+                                    },
+                                    y: {
+                                        stacked: false,
+                                        beginAtZero: true,
+                                        title: { display: true, text: 'Amount (TZS)' }
+                                    }
+                                },
+                                barThickness: 12
+                            }
+                        });
                     });
-                });
+            }
+        });
         </script>
         <!--end row-->
         @can('view graphs')

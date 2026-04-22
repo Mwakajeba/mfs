@@ -1418,7 +1418,10 @@ class LoanController extends Controller
         // Removed heavy debug dump of customers to avoid timeouts
         $products = LoanProduct::where('is_active', true)->get();
 
-        $loanOfficers = User::where('branch_id', auth()->user()->branch_id)->excludeSuperAdmin()->get();
+        $loanOfficers = User::excludeSuperAdmin()
+            ->active()
+            ->orderBy('name')
+            ->get();
 
         $interestCycles = [
             'daily' => 'Daily',

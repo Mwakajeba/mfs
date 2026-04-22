@@ -75,8 +75,15 @@ class Loan extends Model
 
         // Set loan number AFTER the record has an ID to avoid heavy queries/loops
         static::created(function ($loan) {
-            $startNumber = 1000000;
-            $loan->loanNo = 'SF-' . ($startNumber + (int) $loan->id);
+            // First loan should start at MFS10000 (no dash)
+            $startNumber = 9999;
+            $loan->loanNo = 'MFS' . ($startNumber + (int) $loan->id);
+
+            // If reference is empty, default it to the generated loan number
+            if (empty($loan->reference)) {
+                $loan->reference = $loan->loanNo;
+            }
+
             // Save quietly to avoid triggering observers again
             $loan->saveQuietly();
         });
@@ -576,7 +583,7 @@ class Loan extends Model
         // For opening balance/imported loans, do not charge product fees at all
         $isOpeningBalance = $this->created_at && $this->created_at->diffInSeconds($this->disbursed_on ?? $this->date_applied ?? $this->created_at) < 5
             && $this->status === self::STATUS_ACTIVE
-            && $this->loanNo && str_starts_with((string) $this->loanNo, 'SF-') === false;
+            && $this->loanNo && str_starts_with((string) $this->loanNo, 'MFS') === false;
 
         $fees = $isOpeningBalance ? [] : $product->getFeesAttribute();
         \Log::info('[LoanSchedule] Fees: ' . json_encode($fees) . ' | is_opening_balance=' . ($isOpeningBalance ? 'true' : 'false'));
