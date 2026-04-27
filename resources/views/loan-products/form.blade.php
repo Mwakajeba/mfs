@@ -468,6 +468,21 @@
             @error('interest_revenue_account_id') <div class="invalid-feedback">{{ $message }}</div> @enderror
         </div>
 
+        <div class="col-md-4 mb-3">
+            <label class="form-label">Loan Clearing Account (Top-up)</label>
+            <select name="loan_clearing_account_id"
+                class="form-select select2-single @error('loan_clearing_account_id') is-invalid @enderror">
+                <option value="">-- Select Account --</option>
+                @foreach($chartAccounts as $account)
+                    <option value="{{ $account->id }}" {{ old('loan_clearing_account_id', $loanProduct->loan_clearing_account_id ?? '') == $account->id ? 'selected' : '' }}>
+                        {{ $account->account_code }} - {{ $account->account_name }}
+                    </option>
+                @endforeach
+            </select>
+            @error('loan_clearing_account_id') <div class="invalid-feedback">{{ $message }}</div> @enderror
+            <small class="text-muted">Used to internally clear past loans when “Clear Past Loan” is checked.</small>
+        </div>
+
         <!-- Write Off Accounts Configuration -->
         <div class="col-12">
             <h5 class="mb-3 text-primary mt-4">Write Off Accounts</h5>

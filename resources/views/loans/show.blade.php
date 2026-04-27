@@ -408,6 +408,24 @@
                                             </td>
                                         </tr>
                                         @php
+                                            $repaymentFeesPaid = $loan->repayments?->sum(fn($r) => (float) ($r->fee_amount ?? 0)) ?? 0;
+                                            $disburseFeesPaid = (float) ($loan->on_disburse_fee_amount ?? 0);
+                                            $totalFeesPaid = $repaymentFeesPaid + $disburseFeesPaid;
+                                        @endphp
+                                        <tr>
+                                            <td class="fw-bold text-muted ps-4">Fees Paid</td>
+                                            <td class="text-secondary fw-bold">TZS
+                                                {{ number_format($totalFeesPaid, 2) }}
+                                                <br>
+                                                <small class="text-muted">
+                                                    Repayments: {{ number_format($repaymentFeesPaid, 2) }}
+                                                    @if($disburseFeesPaid > 0)
+                                                        • On disburse: {{ number_format($disburseFeesPaid, 2) }}
+                                                    @endif
+                                                </small>
+                                            </td>
+                                        </tr>
+                                        @php
                                             $outstandingBreakdown = $loan->getTopUpBalanceBreakdown();
                                             $outstandingTotal = $outstandingBreakdown['total_balance'] ?? ($loan->amount_total - ($loan->repayments?->sum(fn($r) => $r->principal + $r->interest) ?? 0));
                                         @endphp

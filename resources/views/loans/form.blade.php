@@ -114,6 +114,45 @@ $isEdit = isset($loan);
             <input type="hidden" id="amountInputHidden" name="amount" value="{{ old('amount', isset($loan) ? $loan->amount : '') }}">
             @error('amount') <div class="invalid-feedback">{{ $message }}</div> @enderror
         </div>
+
+        <!-- On Disburse Fee -->
+        <div class="col-md-6 mb-3">
+            <label class="form-label">On disburse fee (optional)</label>
+            <select name="on_disburse_fee_id" class="form-select @error('on_disburse_fee_id') is-invalid @enderror">
+                <option value="">-- None --</option>
+                @foreach(($onDisburseFees ?? collect()) as $fee)
+                <option value="{{ $fee->id }}" {{ old('on_disburse_fee_id', $loan->on_disburse_fee_id ?? '') == $fee->id ? 'selected' : '' }}>
+                    {{ $fee->name }}
+                </option>
+                @endforeach
+            </select>
+            @error('on_disburse_fee_id') <div class="invalid-feedback">{{ $message }}</div> @enderror
+        </div>
+
+        <div class="col-md-6 mb-3">
+            <label class="form-label">On disburse fee amount</label>
+            <input
+                type="number"
+                name="on_disburse_fee_amount"
+                step="0.01"
+                min="0"
+                class="form-control @error('on_disburse_fee_amount') is-invalid @enderror"
+                value="{{ old('on_disburse_fee_amount', $loan->on_disburse_fee_amount ?? '') }}"
+                placeholder="0.00">
+            @error('on_disburse_fee_amount') <div class="invalid-feedback">{{ $message }}</div> @enderror
+        </div>
+
+        <!-- Clear Past Loan -->
+        <div class="col-md-6 mb-3">
+            <div class="form-check mt-4 pt-2">
+                <input class="form-check-input" type="checkbox" name="clear_past_loan" id="clear_past_loan" value="1"
+                    {{ old('clear_past_loan') ? 'checked' : '' }}>
+                <label class="form-check-label" for="clear_past_loan">
+                    Clear Past Loan
+                </label>
+                <div class="form-text">If checked, system will clear customer’s active loan balance first.</div>
+            </div>
+        </div>
           <!-- Interest Rate -->
           <div class="col-md-6 mb-3">
             <label class="form-label">
@@ -615,6 +654,10 @@ $isEdit = isset($loan);
                 interest_cycle: formData.get('interest_cycle'),
                 // Include selected bank account so GL summary can balance debits/credits
                 account_id: formData.get('account_id'),
+                on_disburse_fee_id: formData.get('on_disburse_fee_id'),
+                on_disburse_fee_amount: formData.get('on_disburse_fee_amount'),
+                customer_id: formData.get('customer_id'),
+                clear_past_loan: formData.get('clear_past_loan') ? 1 : 0,
             };
             
             // Validate required fields
@@ -751,6 +794,27 @@ $isEdit = isset($loan);
                             </div>
                         </div>
                     </div>
+
+                    ${summary.past_loan_clear_amount > 0 ? `
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <div class="card border-0 bg-warning text-dark">
+                                <div class="card-body text-center">
+                                    <h4 class="mb-1" style="font-size: 12px; font-weight: bold;">${formatCurrency(summary.past_loan_clear_amount)}</h4>
+                                    <p class="mb-0" style="font-size: 12px;"><strong>Clear Past Loan</strong> (Amount to settle)</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card border-0 bg-info text-white">
+                                <div class="card-body text-center">
+                                    <h4 class="mb-1" style="font-size: 12px; font-weight: bold;">${formatCurrency(summary.net_to_customer)}</h4>
+                                    <p class="mb-0" style="font-size: 12px;"><strong>Net to Customer</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    ` : ``}
                     
                     ${summary.release_date_fees > 0 ? `
                         <div class="alert alert-info mb-3">

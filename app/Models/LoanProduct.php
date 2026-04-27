@@ -34,6 +34,7 @@ class LoanProduct extends Model
         'principal_receivable_account_id',
         'interest_receivable_account_id',
         'interest_revenue_account_id',
+        'loan_clearing_account_id',
         'direct_writeoff_account_id',
         'provision_writeoff_account_id',
         'income_provision_account_id',
@@ -114,6 +115,14 @@ class LoanProduct extends Model
     public function interestRevenueAccount(): BelongsTo
     {
         return $this->belongsTo(ChartAccount::class, 'interest_revenue_account_id');
+    }
+
+    /**
+     * Loan clearing (top-up) account used when clearing past loans internally.
+     */
+    public function loanClearingAccount(): BelongsTo
+    {
+        return $this->belongsTo(ChartAccount::class, 'loan_clearing_account_id');
     }
 
     /**

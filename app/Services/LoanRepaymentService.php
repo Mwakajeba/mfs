@@ -150,6 +150,177 @@ class LoanRepaymentService
     }
 
     /**
+     * Clear a loan internally using a clearing/suspense chart account (no bank receipt).
+     * Creates repayment records to update schedules, and posts GL:
+     * - DR clearing account (total)
+     * - CR principal/interest/fee/penalty component accounts (by allocation)
+     */
+    public function processInternalClearFromTopUp($loanId, $amount, array $paymentData, int $clearingChartAccountId)
+    {
+        DB::beginTransaction();
+
+        $loan = Loan::with(['product', 'customer', 'schedule'])->findOrFail($loanId);
+        $remainingAmount = (float) $amount;
+        $paymentDateForSms = $paymentData['payment_date'] ?? now();
+
+        $unpaidSchedules = $this->getUnpaidSchedules($loan);
+        if ($unpaidSchedules->count() === 0) {
+            DB::rollBack();
+            throw new \Exception('No unpaid schedules found for this loan.');
+        }
+
+        $totalAllocated = 0;
+
+        foreach ($unpaidSchedules as $schedule) {
+            if ($remainingAmount <= 0) {
+                break;
+            }
+
+            $schedulePayment = $this->processSchedulePayment($loan, $schedule, $remainingAmount, $paymentData);
+            if (empty($schedulePayment) || ($schedulePayment['amount'] ?? 0) <= 0) {
+                break;
+            }
+
+            // Repayment schema requires bank_account_id (stores a chart account id in this system).
+            $repayment = $this->createRepaymentRecord($loan, $schedule, $schedulePayment, [
+                'payment_date' => $paymentData['payment_date'] ?? now(),
+                'bank_chart_account_id' => $clearingChartAccountId,
+            ], null);
+
+            $this->createInternalClearingGLTransactions($loan, $repayment, $schedulePayment, $clearingChartAccountId);
+
+            $remainingAmount -= (float) $schedulePayment['amount'];
+            $totalAllocated += (float) $schedulePayment['amount'];
+        }
+
+        if ($totalAllocated <= 0) {
+            DB::rollBack();
+            throw new \Exception('Failed to clear past loan because no amount could be allocated.');
+        }
+
+        if ($this->isLoanFullyPaid($loan)) {
+            $loan->closeLoan();
+        }
+
+        DB::commit();
+
+        // Do not send repayment SMS for internal top-up clear by default
+        return [
+            'success' => true,
+            'paid_amount' => $totalAllocated,
+            'balance' => $remainingAmount,
+            'loan_status' => $loan->fresh()->status,
+        ];
+    }
+
+    /**
+     * Post internal clearing GL: DR clearing, CR components.
+     */
+    private function createInternalClearingGLTransactions($loan, $repayment, $schedulePayment, int $clearingChartAccountId): void
+    {
+        // Determine component accounts similarly to receipt-based posting
+        $feeAccountId = null;
+        if (isset($loan->product->fees_ids)) {
+            $feeIds = is_array($loan->product->fees_ids) ? $loan->product->fees_ids : json_decode($loan->product->fees_ids, true);
+            if (is_array($feeIds)) {
+                foreach ($feeIds as $feeId) {
+                    $fee = \DB::table('fees')->where('id', $feeId)->first();
+                    if ($fee && $fee->include_in_schedule == 1 && $fee->chart_account_id) {
+                        $feeAccountId = $fee->chart_account_id;
+                        break;
+                    }
+                }
+            }
+        }
+
+        $penaltyAccountId = null;
+        if (isset($loan->product->penalty_ids)) {
+            $penaltyIds = is_array($loan->product->penalty_ids) ? $loan->product->penalty_ids : json_decode($loan->product->penalty_ids, true);
+            if (is_array($penaltyIds)) {
+                foreach ($penaltyIds as $penaltyId) {
+                    $penalty = \DB::table('penalties')->where('id', $penaltyId)->first();
+                    if ($penalty && $penalty->penalty_receivables_account_id) {
+                        $penaltyAccountId = $penalty->penalty_receivables_account_id;
+                        break;
+                    }
+                }
+            }
+        }
+
+        $chartAccounts = [
+            'principal' => $loan->product->principal_receivable_account_id ?? null,
+            'interest' => $loan->product->interest_revenue_account_id ?? null,
+            'fee_amount' => $feeAccountId,
+            'penalty_amount' => $penaltyAccountId ?? null,
+        ];
+
+        // Switch interest account to receivable if mature interest exists (same logic as receipt posting)
+        $receivableId = $loan->product->interest_receivable_account_id;
+        $incomeId = $loan->product->interest_revenue_account_id;
+        if ($receivableId && $incomeId) {
+            $exists = GlTransaction::where('chart_account_id', $receivableId)
+                ->where('customer_id', $loan->customer_id)
+                ->where('date', $repayment->due_date)
+                ->where('amount', $schedulePayment['interest'])
+                ->where('transaction_type', 'Mature Interest')
+                ->exists();
+
+            $incomeExists = GlTransaction::where('chart_account_id', $incomeId)
+                ->where('customer_id', $loan->customer_id)
+                ->where('date', $repayment->due_date)
+                ->where('amount', $schedulePayment['interest'])
+                ->where('transaction_type', 'Mature Interest')
+                ->exists();
+
+            if ($exists && $incomeExists) {
+                $chartAccounts['interest'] = $receivableId;
+            }
+        }
+
+        $components = [
+            'principal' => (float) ($schedulePayment['principal'] ?? 0),
+            'interest' => (float) ($schedulePayment['interest'] ?? 0),
+            'fee_amount' => (float) ($schedulePayment['fee_amount'] ?? 0),
+            'penalty_amount' => (float) ($schedulePayment['penalty_amount'] ?? 0),
+        ];
+
+        $total = array_sum($components);
+        if ($total > 0) {
+            GlTransaction::create([
+                'chart_account_id' => $clearingChartAccountId,
+                'customer_id' => $loan->customer_id,
+                'amount' => $total,
+                'nature' => 'debit',
+                'transaction_id' => $loan->id,
+                'transaction_type' => 'Loan TopUp Clear',
+                'date' => $repayment->payment_date ?? now(),
+                'description' => "Top-up clearing debit for loan #{$loan->id}",
+                'branch_id' => auth()->user()->branch_id ?? 1,
+                'user_id' => auth()->id(),
+            ]);
+        }
+
+        foreach ($components as $component => $amount) {
+            if ($amount <= 0) continue;
+            $accountId = $chartAccounts[$component] ?? null;
+            if (!$accountId) continue;
+
+            GlTransaction::create([
+                'chart_account_id' => $accountId,
+                'customer_id' => $loan->customer_id,
+                'amount' => $amount,
+                'nature' => 'credit',
+                'transaction_id' => $loan->id,
+                'transaction_type' => 'Loan TopUp Clear',
+                'date' => $repayment->payment_date ?? now(),
+                'description' => ucfirst($component) . " cleared by top-up for loan #{$loan->id}",
+                'branch_id' => auth()->user()->branch_id ?? 1,
+                'user_id' => auth()->id(),
+            ]);
+        }
+    }
+
+    /**
      * Process repayment lines from a receipt voucher: apply each (schedule_id, amount) to the loan
      * and create repayment records + GL transactions. Caller must have created the receipt and bank debit GL.
      *

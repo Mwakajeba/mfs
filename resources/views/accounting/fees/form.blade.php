@@ -290,7 +290,7 @@
                 const rangeContainer = $('#range-fee-container');
                 const amountInput = $('#amount-input');
 
-                if (feeType === 'range') {
+                    if (feeType === 'range') {
                     amountContainer.hide();
                     rangeContainer.show();
                     amountInput.removeAttr('required');

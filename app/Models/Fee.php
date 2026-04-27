@@ -105,6 +105,7 @@ class Fee extends Model
         return match ($this->fee_type) {
             'fixed' => '<span class="badge bg-primary">Fixed</span>',
             'percentage' => '<span class="badge bg-info">Percentage</span>',
+            'on_disburse' => '<span class="badge bg-success">On disburse</span>',
             'range' => '<span class="badge bg-warning">Range</span>',
             default => '<span class="badge bg-secondary">Unknown</span>',
         };
@@ -231,6 +232,7 @@ class Fee extends Model
         return [
             'fixed' => 'Fixed Amount',
             'percentage' => 'Percentage',
+            'on_disburse' => 'On disburse',
             'range' => 'Range',
         ];
     }

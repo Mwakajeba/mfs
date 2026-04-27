@@ -66,8 +66,8 @@ class FeeController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'chart_account_id' => 'required|exists:chart_accounts,id',
-            'fee_type' => 'required|in:fixed,percentage',
-            'amount' => 'required|numeric|min:0',
+            'fee_type' => 'required|in:fixed,percentage,on_disburse,range',
+            'amount' => 'required_if:fee_type,fixed,percentage,on_disburse|numeric|min:0',
             'description' => 'nullable|string',
             'status' => 'required|in:active,inactive',
             'deduction_criteria' => 'required|in:do_not_include_in_loan_schedule,distribute_fee_evenly_to_all_repayments,charge_fee_on_release_date,charge_fee_on_first_repayment,charge_fee_on_last_repayment,charge_same_fee_to_all_repayments',
@@ -187,8 +187,8 @@ class FeeController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'chart_account_id' => 'required|exists:chart_accounts,id',
-            'fee_type' => 'required|in:fixed,percentage,range',
-            'amount' => 'required_if:fee_type,fixed,percentage|numeric|min:0',
+            'fee_type' => 'required|in:fixed,percentage,on_disburse,range',
+            'amount' => 'required_if:fee_type,fixed,percentage,on_disburse|numeric|min:0',
             'description' => 'nullable|string',
             'status' => 'required|in:active,inactive',
             'deduction_criteria' => 'required|in:do_not_include_in_loan_schedule,distribute_fee_evenly_to_all_repayments,charge_fee_on_release_date,charge_fee_on_first_repayment,charge_fee_on_last_repayment,charge_same_fee_to_all_repayments',

@@ -23,6 +23,7 @@ use App\Models\Receipt;
 use App\Models\Repayment;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\LoanRepaymentService;
 use Illuminate\Http\Request;
 use App\Services\LoanRestructuringService;
 use App\Jobs\BulkLoanImportJob;
@@ -1423,6 +1424,12 @@ class LoanController extends Controller
             ->orderBy('name')
             ->get();
 
+        $onDisburseFees = Fee::query()
+            ->where('status', 'active')
+            ->where('fee_type', 'on_disburse')
+            ->orderBy('name')
+            ->get();
+
         $interestCycles = [
             'daily' => 'Daily',
             'weekly' => 'Weekly',
@@ -1434,7 +1441,7 @@ class LoanController extends Controller
         ];
         $bankAccounts = BankAccount::forUserBranches()->orderBy('name')->get();
         $sectors = ['Agriculture', 'Business', 'Education', 'Health', 'Other']; // Example sectors
-        return view('loans.create', compact('customers', 'products', 'sectors', 'bankAccounts', 'loanOfficers', 'interestCycles'));
+        return view('loans.create', compact('customers', 'products', 'sectors', 'bankAccounts', 'loanOfficers', 'interestCycles', 'onDisburseFees'));
     }
 
     /**
@@ -1450,6 +1457,10 @@ class LoanController extends Controller
                 'amount' => 'required|numeric|min:0',
                 'interest_cycle' => 'required|string|max:50',
                 'account_id' => 'nullable|exists:bank_accounts,id', // Optional for GL summary
+                'on_disburse_fee_id' => 'nullable|exists:fees,id',
+                'on_disburse_fee_amount' => 'nullable|numeric|min:0',
+                'customer_id' => 'nullable|exists:customers,id',
+                'clear_past_loan' => 'nullable|boolean',
             ]);
 
             $product = LoanProduct::with('principalReceivableAccount')->findOrFail($validated['product_id']);
@@ -1479,7 +1490,9 @@ class LoanController extends Controller
                         $feeType = $fee->fee_type;
                         $calculatedFee = 0;
                         
-                        if ($feeType === 'percentage') {
+                        if ($feeType === 'on_disburse') {
+                            $calculatedFee = (float) ($validated['on_disburse_fee_amount'] ?? 0);
+                        } elseif ($feeType === 'percentage') {
                             $calculatedFee = ($principal * $feeAmount / 100);
                         } elseif ($feeType === 'range') {
                             $feeModel = \App\Models\Fee::find($fee->id);
@@ -1528,9 +1541,26 @@ class LoanController extends Controller
                     }
                 }
             }
+
+            // Note: on_disburse fees configured on product use the entered on_disburse_fee_amount.
             
             // Calculate net disbursed amount
             $netDisbursed = $principal - $releaseFeeTotal;
+
+            $pastLoanClearAmount = 0;
+            $netToCustomer = $netDisbursed;
+            if (!empty($validated['clear_past_loan']) && !empty($validated['customer_id'])) {
+                $pastLoan = Loan::query()
+                    ->where('customer_id', $validated['customer_id'])
+                    ->where('status', 'active')
+                    ->latest('id')
+                    ->first();
+
+                if ($pastLoan) {
+                    $pastLoanClearAmount = (float) ($pastLoan->total_amount_to_settle ?? 0);
+                    $netToCustomer = max(0, $netDisbursed - $pastLoanClearAmount);
+                }
+            }
             
             // Use calculator service for full calculation
             $calculatorService = new \App\Services\LoanCalculatorService();
@@ -1636,9 +1666,22 @@ class LoanController extends Controller
                 $glCredits[] = [
                     'account_name' => $bankAccount->name ?? 'Bank Account',
                     'account_code' => $bankAccount->chartAccount->code ?? '',
-                    'amount' => round($netDisbursed, 2),
+                    'amount' => round($netToCustomer, 2),
                     'description' => 'Loan Disbursement'
                 ];
+            }
+
+            // GL Entry 2.1: Loan Clearing Account (Top-up) - withheld to clear past loan
+            if ($pastLoanClearAmount > 0 && !empty($product->loan_clearing_account_id)) {
+                $clearingAccount = \App\Models\ChartAccount::find($product->loan_clearing_account_id);
+                if ($clearingAccount) {
+                    $glCredits[] = [
+                        'account_name' => $clearingAccount->account_name ?? 'Loan Clearing Account',
+                        'account_code' => $clearingAccount->account_code ?? '',
+                        'amount' => round($pastLoanClearAmount, 2),
+                        'description' => 'Clear Past Loan (withheld)'
+                    ];
+                }
             }
             
             // GL Entry 3: Release Date Fees
@@ -1654,46 +1697,12 @@ class LoanController extends Controller
                         'amount' => round($fee['amount'], 2),
                         'description' => $fee['name'] . ' Fee Income'
                     ];
-                    
-                    // Debit: Bank Account (for fee payment)
-                    if ($bankChartAccountId && $bankAccount && $bankAccount->chartAccount) {
-                        $glDebits[] = [
-                            'account_name' => $bankAccount->name ?? 'Bank Account',
-                            'account_code' => $bankAccount->chartAccount->code ?? '',
-                            'amount' => round($fee['amount'], 2),
-                            'description' => $fee['name'] . ' Fee Payment'
-                        ];
-                    }
                 }
             }
             
-            // Calculate totals
+            // Calculate totals (no auto-balance lines; we want the preview to match real posting)
             $totalDebits = array_sum(array_column($glDebits, 'amount'));
             $totalCredits = array_sum(array_column($glCredits, 'amount'));
-            
-            // If there's a remaining balance, credit/debit the selected bank account to balance
-            $balanceDifference = $totalDebits - $totalCredits;
-            if (abs($balanceDifference) > 0.01 && $bankChartAccountId && $bankAccount && $bankAccount->chartAccount) {
-                if ($balanceDifference > 0) {
-                    // Need to credit more to balance
-                    $glCredits[] = [
-                        'account_name' => $bankAccount->name ?? 'Bank Account',
-                        'account_code' => $bankAccount->chartAccount->code ?? '',
-                        'amount' => round($balanceDifference, 2),
-                        'description' => 'Balance Adjustment'
-                    ];
-                    $totalCredits += $balanceDifference;
-                } else {
-                    // Need to debit more to balance
-                    $glDebits[] = [
-                        'account_name' => $bankAccount->name ?? 'Bank Account',
-                        'account_code' => $bankAccount->chartAccount->code ?? '',
-                        'amount' => round(abs($balanceDifference), 2),
-                        'description' => 'Balance Adjustment'
-                    ];
-                    $totalDebits += abs($balanceDifference);
-                }
-            }
             
             return response()->json([
                 'success' => true,
@@ -1706,6 +1715,8 @@ class LoanController extends Controller
                     'total_fees' => $calculation['totals']['total_fees'],
                     'release_date_fees' => round($releaseFeeTotal, 2),
                     'net_disbursed' => round($netDisbursed, 2),
+                    'past_loan_clear_amount' => round($pastLoanClearAmount, 2),
+                    'net_to_customer' => round($netToCustomer, 2),
                     'monthly_payment' => $calculation['totals']['monthly_payment'],
                     'total_amount' => $calculation['totals']['total_amount'],
                     'release_fees_breakdown' => $releaseFees,
@@ -1748,6 +1759,9 @@ class LoanController extends Controller
             'account_id' => 'required|exists:bank_accounts,id',
             'sector' => 'required|string',
             'reference' => 'nullable|string|max:255',
+            'on_disburse_fee_id' => 'nullable|exists:fees,id',
+            'on_disburse_fee_amount' => 'nullable|numeric|min:0',
+            'clear_past_loan' => 'nullable|boolean',
         ]);
 
         // Debug: Log the validated data to check customer_id
@@ -1823,6 +1837,20 @@ class LoanController extends Controller
                 // Convert interest rate based on selected cycle (base is monthly)
                 $convertedInterest = $this->convertInterestRate($validated['interest'], $validated['interest_cycle']);
 
+                $pastLoan = null;
+                $pastLoanClearAmount = 0;
+                if (!empty($validated['clear_past_loan'])) {
+                    $pastLoan = Loan::query()
+                        ->where('customer_id', $validated['customer_id'])
+                        ->where('status', 'active')
+                        ->latest('id')
+                        ->first();
+
+                    if ($pastLoan) {
+                        $pastLoanClearAmount = (float) ($pastLoan->total_amount_to_settle ?? 0);
+                    }
+                }
+
                 // Step 1: Create Loan
                 $loan = Loan::create([
                     'product_id' => $validated['product_id'],
@@ -1840,6 +1868,9 @@ class LoanController extends Controller
                     'interest_cycle' => $validated['interest_cycle'], // Use cycle from form
                     'loan_officer_id' => $validated['loan_officer'],
                     'reference' => $validated['reference'] ?? null,
+                    'on_disburse_fee_id' => $validated['on_disburse_fee_id'] ?? null,
+                    'on_disburse_fee_amount' => $validated['on_disburse_fee_amount'] ?? null,
+                    'top_up_id' => $pastLoan?->id,
                 ]);
                 info('loaan-->' . $loan);
 
@@ -1908,6 +1939,8 @@ class LoanController extends Controller
                 }
 
                 $releaseFeeTotal = 0;
+                $onDisburseFeeToPost = null;
+                $onDisburseFeeToPostAmount = 0;
                 if ($product && $product->fees_ids) {
                     \Log::info('fees_ids: ' . json_encode($product->fees_ids));
                     $feeIds = is_array($product->fees_ids) ? $product->fees_ids : json_decode($product->fees_ids, true);
@@ -1924,7 +1957,13 @@ class LoanController extends Controller
                             $feeType = $fee->fee_type;
                             $calculatedFee = 0;
                             
-                            if ($feeType === 'percentage') {
+                            if ($feeType === 'on_disburse') {
+                                $calculatedFee = (float) ($validated['on_disburse_fee_amount'] ?? 0);
+                                if ($calculatedFee > 0) {
+                                    $onDisburseFeeToPost = $fee;
+                                    $onDisburseFeeToPostAmount = $calculatedFee;
+                                }
+                            } elseif ($feeType === 'percentage') {
                                 $calculatedFee = ((float) $validated['amount'] * (float) $feeAmount / 100);
                             } elseif ($feeType === 'range') {
                                 $feeModel = \App\Models\Fee::find($fee->id);
@@ -1943,7 +1982,10 @@ class LoanController extends Controller
 
                 \Log::info("Total release fees: $releaseFeeTotal");
 
-                $disbursementAmount = $validated['amount'] - $releaseFeeTotal;
+                $disbursementAmount = $validated['amount'] - $releaseFeeTotal - $pastLoanClearAmount;
+                if ($disbursementAmount < 0) {
+                    throw new \Exception('Loan amount is not enough to clear past loan and release fees.');
+                }
 
                 // Debug: Log customer_id before Payment creation
                 \Log::info('Creating Payment with customer_id:', [
@@ -1983,8 +2025,23 @@ class LoanController extends Controller
                     'description' => $notes,
                 ]);
 
+                if (!empty($pastLoan) && $pastLoanClearAmount > 0) {
+                    $clearingAccountId = (int) ($product->loan_clearing_account_id ?? 0);
+                    if ($clearingAccountId <= 0) {
+                        throw new \Exception('Loan clearing account not set on loan product.');
+                    }
+
+                    $repaymentService = new LoanRepaymentService();
+                    $repaymentService->processInternalClearFromTopUp(
+                        $pastLoan->id,
+                        $pastLoanClearAmount,
+                        ['payment_date' => $validated['date_applied']],
+                        $clearingAccountId
+                    );
+                }
+
                 // Step 6: GL Transactions
-                GlTransaction::insert([
+                $disbursementEntries = [
                     [
                         'chart_account_id' => $bankAccount->chart_account_id,
                         'customer_id' => $loan->customer_id,
@@ -2009,7 +2066,48 @@ class LoanController extends Controller
                         'branch_id' => $branchId,
                         'user_id' => $userId,
                     ]
-                ]);
+                ];
+
+                if (!empty($pastLoan) && $pastLoanClearAmount > 0) {
+                    $clearingAccountId = (int) ($product->loan_clearing_account_id ?? 0);
+                    if ($clearingAccountId <= 0) {
+                        throw new \Exception('Loan clearing account not set on loan product.');
+                    }
+                    $disbursementEntries[] = [
+                        'chart_account_id' => $clearingAccountId,
+                        'customer_id' => $loan->customer_id,
+                        'amount' => $pastLoanClearAmount,
+                        'nature' => 'credit',
+                        'transaction_id' => $loan->id,
+                        'transaction_type' => 'Loan Disbursement',
+                        'date' => $validated['date_applied'],
+                        'description' => 'Top-up clearing amount withheld',
+                        'branch_id' => $branchId,
+                        'user_id' => $userId,
+                    ];
+                }
+
+                GlTransaction::insert($disbursementEntries);
+
+                if (!empty($onDisburseFeeToPost) && $onDisburseFeeToPostAmount > 0) {
+                    $feeModel = Fee::find($onDisburseFeeToPost->id);
+                    if (empty($feeModel) || empty($feeModel->chart_account_id)) {
+                        throw new \Exception('On disburse fee chart account not set.');
+                    }
+
+                    GlTransaction::create([
+                        'chart_account_id' => $feeModel->chart_account_id,
+                        'customer_id' => $loan->customer_id,
+                        'amount' => $onDisburseFeeToPostAmount,
+                        'nature' => 'credit',
+                        'transaction_id' => $loan->id,
+                        'transaction_type' => 'Loan Disbursement',
+                        'date' => $validated['date_applied'],
+                        'description' => $feeModel->name . ' (On Disburse) for loan ' . $loan->loanNo,
+                        'branch_id' => $branchId,
+                        'user_id' => $userId,
+                    ]);
+                }
                 // Step 7: Post Penalty Amount to GL (if exists)
                 $penalty = $product->penalty;
 

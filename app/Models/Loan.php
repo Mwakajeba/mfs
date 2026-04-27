@@ -34,6 +34,8 @@ class Loan extends Model
         'loan_officer_id',
         'loanNo',
         'reference',
+        'on_disburse_fee_id',
+        'on_disburse_fee_amount',
         'top_up_id',
         'first_repayment_date',
         'last_repayment_date',
