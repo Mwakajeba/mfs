@@ -61,6 +61,9 @@
                                 <a href="{{ route('customers.bulk-upload') }}" class="btn btn-success me-2">
                                     <i class="bx bx-upload"></i> Bulk Upload
                                 </a>
+                                <button type="button" class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#bulkPhoneUpdateModal">
+                                    <i class="bx bx-phone"></i> Bulk Phone Update
+                                </button>
                                 <a href="{{ route('customers.create') }}" class="btn btn-primary">
                                     <i class="bx bx-plus"></i> Add Customer
                                 </a>
@@ -95,6 +98,59 @@
             </div>
         </div>
 
+    </div>
+</div>
+
+<!-- Bulk Phone Update Modal -->
+<div class="modal fade" id="bulkPhoneUpdateModal" tabindex="-1" aria-labelledby="bulkPhoneUpdateModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="bulkPhoneUpdateModalLabel">
+                    <i class="bx bx-phone me-2"></i>Bulk Phone Update
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <strong>Upload columns:</strong> <code>name</code>, <code>bank_name</code>, <code>bank_account</code>, <code>phone1</code>.
+                    System finds customer by <code>bank_name + bank_account</code> and updates <code>phone1</code> to <code>255XXXXXXXXX</code>.
+                </div>
+
+                <div class="mb-3">
+                    <a class="btn btn-sm btn-outline-primary" href="{{ route('customers.bulk-phone-update.template') }}">
+                        <i class="bx bx-download me-1"></i>Download Template
+                    </a>
+                </div>
+
+                <form id="bulkPhoneUpdateForm" action="{{ route('customers.bulk-phone-update.store') }}" method="POST" enctype="multipart/form-data">
+                    @csrf
+                    <div class="mb-3">
+                        <label for="phone_file" class="form-label">Excel/CSV File <span class="text-danger">*</span></label>
+                        <input type="file" name="phone_file" id="phone_file" class="form-control" accept=".xlsx,.xls,.csv" required>
+                    </div>
+
+                    <div id="phoneProgressContainer" class="mt-3" style="display:none;">
+                        <div class="d-flex justify-content-between mb-2">
+                            <span id="phoneProgressText">Processing...</span>
+                            <span id="phoneProgressPercent">0%</span>
+                        </div>
+                        <div class="progress" style="height: 25px;">
+                            <div id="phoneProgressBar" class="progress-bar progress-bar-striped progress-bar-animated"
+                                 role="progressbar" style="width:0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                                <span id="phoneProgressBarText">0%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-end mt-3">
+                        <button type="submit" class="btn btn-primary" id="phoneSubmitBtn">
+                            <i class="bx bx-upload me-1"></i>Upload & Update
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 @endsection
@@ -259,5 +315,74 @@
             table.ajax.reload(null, false);
         };
     });
+</script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const form = document.getElementById('bulkPhoneUpdateForm');
+    if (!form) return;
+
+    const submitBtn = document.getElementById('phoneSubmitBtn');
+    const progressContainer = document.getElementById('phoneProgressContainer');
+
+    function updateProgress(percent) {
+        const bar = document.getElementById('phoneProgressBar');
+        const barText = document.getElementById('phoneProgressBarText');
+        const percentText = document.getElementById('phoneProgressPercent');
+        bar.style.width = percent + '%';
+        bar.setAttribute('aria-valuenow', percent);
+        barText.textContent = Math.round(percent) + '%';
+        percentText.textContent = Math.round(percent) + '%';
+    }
+
+    function pollProgress(importId) {
+        const url = "{{ route('customers.bulk-phone-update.progress') }}" + "?import_id=" + encodeURIComponent(importId);
+        const tick = () => {
+            fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then(r => r.json())
+                .then(p => {
+                    if (!p || !p.status) return;
+                    updateProgress(p.percentage || 0);
+                    if (p.status === 'completed') {
+                        updateProgress(100);
+                        submitBtn.disabled = false;
+                        submitBtn.innerHTML = '<i class="bx bx-upload me-1"></i>Upload & Update';
+                        setTimeout(() => window.location.reload(), 800);
+                        return;
+                    }
+                    setTimeout(tick, 1500);
+                })
+                .catch(() => setTimeout(tick, 2000));
+        };
+        tick();
+    }
+
+    form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        const fileInput = document.getElementById('phone_file');
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        progressContainer.style.display = 'block';
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="bx bx-loader-alt bx-spin me-1"></i>Starting...';
+
+        const formData = new FormData(form);
+        fetch(form.action, {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            body: formData
+        })
+        .then(r => r.json())
+        .then(resp => {
+            if (!resp || !resp.import_id) throw new Error(resp && resp.message ? resp.message : 'No import_id returned');
+            pollProgress(resp.import_id);
+        })
+        .catch(err => {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="bx bx-upload me-1"></i>Upload & Update';
+            alert(err.message || 'Upload failed');
+        });
+    });
+});
 </script>
 @endpush

@@ -18,6 +18,8 @@ use App\Exports\CustomerBulkUploadSampleExport;
 use App\Exports\CustomerBulkUploadFailedExport;
 use App\Jobs\BulkCustomerUploadJob;
 use App\Jobs\BulkCustomerUploadChunkJob;
+use App\Jobs\BulkCustomerPhoneUpdateChunkJob;
+use App\Exports\CustomerBulkPhoneUpdateTemplateExport;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -861,6 +863,205 @@ class CustomerController extends Controller
     }
 
     public function getBulkUploadProgress(Request $request)
+    {
+        $importId = $request->get('import_id');
+        if (!$importId) {
+            return response()->json(['error' => 'import_id is required'], 400);
+        }
+        $progress = Cache::get($importId);
+        if (!$progress) {
+            return response()->json(['status' => 'not_found'], 404);
+        }
+        return response()->json($progress);
+    }
+
+    public function downloadPhoneUpdateTemplate()
+    {
+        $filename = 'customer_bulk_phone_update_template_' . date('Y-m-d') . '.xlsx';
+        return Excel::download(new CustomerBulkPhoneUpdateTemplateExport(), $filename);
+    }
+
+    public function bulkPhoneUpdateStore(Request $request)
+    {
+        $request->validate([
+            'phone_file' => 'required|file|mimes:csv,txt,xlsx,xls|max:10240',
+        ]);
+
+        try {
+            $file = $request->file('phone_file');
+            $extension = strtolower((string) $file->getClientOriginalExtension());
+            $path = $file->getRealPath();
+
+            $data = [];
+            $header = [];
+            $headerRowIndex = 0;
+
+            if (in_array($extension, ['xlsx', 'xls'], true)) {
+                $spreadsheet = IOFactory::load($path);
+                $rows = $spreadsheet->getActiveSheet()->toArray();
+                if (empty($rows)) {
+                    return back()->withErrors(['phone_file' => 'Excel file is empty.']);
+                }
+
+                for ($i = 0; $i < min(20, count($rows)); $i++) {
+                    $potentialHeader = array_map(function ($cell) {
+                        $value = is_null($cell) ? '' : (string) $cell;
+                        return strtolower(trim($value));
+                    }, $rows[$i]);
+
+                    $nonEmptyCells = array_filter($potentialHeader, function ($val) {
+                        return !empty($val) &&
+                            !preg_match('/^(instruction|note|delete|fill|use|template|bulk)/i', $val);
+                    });
+
+                    if (count($nonEmptyCells) < 3) {
+                        continue;
+                    }
+
+                    $normalizedHeader = array_map(function ($col) {
+                        $col = strtolower(trim((string) $col));
+                        $col = preg_replace('/\s+/', '', $col);
+                        $col = preg_replace('/[^a-z0-9_]/', '', $col);
+
+                        $variations = [
+                            'name' => ['name', 'fullname', 'full_name', 'customername', 'customer_name'],
+                            'bank_name' => ['bank', 'bankname', 'bank_name'],
+                            'bank_account' => ['account', 'accountnumber', 'account_number', 'bankaccount', 'bank_account'],
+                            'phone1' => ['phone1', 'phone', 'phone_1', 'phonenumber', 'phone_number', 'mobile', 'mobile1'],
+                        ];
+
+                        foreach ($variations as $standard => $aliases) {
+                            if (in_array($col, $aliases, true)) {
+                                return $standard;
+                            }
+                        }
+                        return $col;
+                    }, $potentialHeader);
+
+                    if (in_array('bank_name', $normalizedHeader, true) && in_array('bank_account', $normalizedHeader, true) && in_array('phone1', $normalizedHeader, true)) {
+                        $header = $normalizedHeader;
+                        $headerRowIndex = $i;
+                        break;
+                    }
+                }
+
+                if (empty($header)) {
+                    return back()->withErrors(['phone_file' => 'Could not find header row. Required columns: name, bank_name, bank_account, phone1']);
+                }
+
+                $rows = array_slice($rows, $headerRowIndex + 1);
+
+                foreach ($rows as $row) {
+                    $rowData = [];
+                    foreach ($header as $index => $headerName) {
+                        $rowData[$headerName] = trim((string) ($row[$index] ?? ''));
+                    }
+                    if (!empty(array_filter($rowData, fn ($val) => $val !== ''))) {
+                        $data[] = $rowData;
+                    }
+                }
+            } else {
+                $csvData = array_map('str_getcsv', file($path));
+                for ($i = 0; $i < min(10, count($csvData)); $i++) {
+                    $potentialHeader = array_map(fn ($cell) => strtolower(trim((string) ($cell ?? ''))), $csvData[$i]);
+
+                    $normalizedHeader = array_map(function ($col) {
+                        $col = strtolower(trim((string) $col));
+                        $col = preg_replace('/\s+/', '', $col);
+                        $variations = [
+                            'name' => ['name', 'fullname', 'full_name', 'customername', 'customer_name'],
+                            'bank_name' => ['bank', 'bankname', 'bank_name'],
+                            'bank_account' => ['account', 'accountnumber', 'account_number', 'bankaccount', 'bank_account'],
+                            'phone1' => ['phone1', 'phone', 'phone_1', 'phonenumber', 'phone_number', 'mobile', 'mobile1'],
+                        ];
+
+                        foreach ($variations as $standard => $aliases) {
+                            if (in_array($col, $aliases, true)) {
+                                return $standard;
+                            }
+                        }
+                        return $col;
+                    }, $potentialHeader);
+
+                    if (in_array('bank_name', $normalizedHeader, true) && in_array('bank_account', $normalizedHeader, true) && in_array('phone1', $normalizedHeader, true)) {
+                        $header = $normalizedHeader;
+                        $headerRowIndex = $i;
+                        break;
+                    }
+                }
+
+                if (empty($header)) {
+                    return back()->withErrors(['phone_file' => 'Could not find header row. Required columns: name, bank_name, bank_account, phone1']);
+                }
+
+                $csvData = array_slice($csvData, $headerRowIndex + 1);
+                foreach ($csvData as $row) {
+                    if (count($row) < count($header)) {
+                        continue;
+                    }
+                    $rowData = [];
+                    foreach ($header as $index => $headerName) {
+                        $rowData[$headerName] = trim((string) ($row[$index] ?? ''));
+                    }
+                    if (!empty(array_filter($rowData, fn ($val) => $val !== ''))) {
+                        $data[] = $rowData;
+                    }
+                }
+            }
+
+            $requiredColumns = ['bank_name', 'bank_account', 'phone1'];
+            $missingColumns = array_diff($requiredColumns, $header);
+            if (!empty($missingColumns)) {
+                return back()->withErrors(['phone_file' => 'Missing required columns: ' . implode(', ', $missingColumns)]);
+            }
+
+            if (empty($data)) {
+                return back()->withErrors(['phone_file' => 'No data rows found in the file.']);
+            }
+
+            $totalRows = count($data);
+            $chunkSize = 500;
+            $chunks = array_chunk($data, $chunkSize);
+            $totalChunks = count($chunks);
+
+            $importId = 'cust_phone_update_' . auth()->id() . '_' . time();
+            Cache::put($importId, [
+                'status' => 'processing',
+                'current' => 0,
+                'total' => $totalRows,
+                'success' => 0,
+                'failed' => 0,
+                'skipped' => 0,
+                'percentage' => 0,
+            ], 3600);
+
+            foreach ($chunks as $chunkIndex => $chunk) {
+                dispatch(new BulkCustomerPhoneUpdateChunkJob(
+                    $chunk,
+                    (int) auth()->user()->branch_id,
+                    (int) auth()->user()->company_id,
+                    $importId,
+                    $chunkIndex,
+                    $totalChunks,
+                    (int) $headerRowIndex
+                ));
+            }
+
+            if ($request->ajax()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Phone update started. Processing in background...',
+                    'import_id' => $importId,
+                ]);
+            }
+
+            return back()->with('success', 'Phone update started. Processing in background...')->with('import_id', $importId);
+        } catch (\Throwable $e) {
+            return back()->withErrors(['phone_file' => 'Failed to process file: ' . $e->getMessage()]);
+        }
+    }
+
+    public function getBulkPhoneUpdateProgress(Request $request)
     {
         $importId = $request->get('import_id');
         if (!$importId) {

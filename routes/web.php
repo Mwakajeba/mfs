@@ -854,6 +854,9 @@ Route::middleware(['auth'])->group(function () {
     Route::get('customers/bulk-upload', [CustomerController::class, 'bulkUpload'])->name('customers.bulk-upload');
     Route::post('customers/bulk-upload', [CustomerController::class, 'bulkUploadStore'])->name('customers.bulk-upload.store');
     Route::get('customers/bulk-upload/progress', [CustomerController::class, 'getBulkUploadProgress'])->name('customers.bulk-upload.progress');
+    Route::get('customers/bulk-phone-update/template', [CustomerController::class, 'downloadPhoneUpdateTemplate'])->name('customers.bulk-phone-update.template');
+    Route::post('customers/bulk-phone-update', [CustomerController::class, 'bulkPhoneUpdateStore'])->name('customers.bulk-phone-update.store');
+    Route::get('customers/bulk-phone-update/progress', [CustomerController::class, 'getBulkPhoneUpdateProgress'])->name('customers.bulk-phone-update.progress');
     Route::get('customers/download-failed-records', [CustomerController::class, 'downloadFailedRecords'])->name('customers.download-failed-records');
     Route::get('customers/download-sample', [CustomerController::class, 'downloadSample'])->name('customers.download-sample');
 
