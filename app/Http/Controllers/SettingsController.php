@@ -902,7 +902,7 @@ class SettingsController extends Controller
         $eventVariables = [
             'otp_verification'      => ['{code}'],
             'loan_disbursement'     => ['{customer_name}', '{amount}', '{loan_date}', '{repayment_start_date}', '{payment_amount}', '{cycle}', '{company_name}', '{company_phone}'],
-            'loan_repayment'        => ['{customer_name}', '{amount}', '{payment_date}', '{loan_no}', '{company_name}', '{company_phone}'],
+            'loan_repayment'        => ['{customer_name}', '{amount}', '{payment_date}', '{loan_no}', '{remaining_balance}', '{company_name}', '{company_phone}', '{branch_name}'],
             'loan_arrears_reminder' => ['{customer_name}', '{amount}', '{days_overdue}', '{loan_no}', '{due_date}', '{reminder_type}', '{company_name}', '{company_phone}'],
             'customer_notifications'=> ['{customer_name}', '{company_name}'],
             'group_notifications'   => ['{customer_name}', '{amount_paid}', '{remaining_amount}', '{company_name}'],
@@ -915,7 +915,7 @@ class SettingsController extends Controller
         $defaultMessages = [
             'otp_verification'      => 'OTP Code is {code}',
             'loan_disbursement'     => 'Umepokea mkopo wa Tsh {amount} tarehe {loan_date}, Marejesho yako yataanza {repayment_start_date} na utakuwa unalipa Tsh {payment_amount} {cycle}. Asante. Ujumbe umetoka {company_name}',
-            'loan_repayment'        => 'Habari! {customer_name}, Tumepokea marejesho ya Tsh {amount} tarehe {payment_date} kutoka kwenye mkopo namba {loan_no}. Asante. Ujumbe umetoka {company_name}',
+            'loan_repayment'        => 'Ndugu {customer_name} rejesho lako la Tsh. {amount}/= limepokelewa {company_name} na jumla ya deni lililobaki ni Tsh. {remaining_balance} . Piga {company_phone}-{company_name} - {branch_name}',
             'loan_arrears_reminder' => 'Habari! {customer_name}, Mkopo wako una deni la Tsh {amount} na umekwisha siku {days_overdue}. Tafadhali fanya malipo yako mapema. Asante. Ujumbe umetoka {company_name}',
             'customer_notifications'=> '(No default — message is composed manually)',
             'group_notifications'   => 'Habari! {customer_name}, umelipa rejesho kiasi cha Tsh {amount_paid}. Salio: Tsh {remaining_amount}. {company_name}',

@@ -486,20 +486,38 @@ class LoanRepaymentService
             // Get loan number
             $loanNo = $loan->loanNo ?? 'N/A';
 
+            // Remaining balance after this payment
+            $remainingBalance = max(0, (float) ($loan->total_amount_to_settle ?? 0));
+            $formattedRemainingBalance = number_format($remainingBalance, 0);
+
+            // Branch name
+            $branchName = '';
+            if ($loan->relationLoaded('branch') && $loan->branch) {
+                $branchName = $loan->branch->name ?? '';
+            } elseif (!empty($loan->branch_id)) {
+                $branch = \App\Models\Branch::find($loan->branch_id);
+                $branchName = $branch ? ($branch->name ?? '') : '';
+            }
+
             // Build SMS message — use custom template if set, otherwise use default
             $templateVars = [
                 'customer_name' => $customerName,
                 'amount'        => $formattedAmount,
                 'payment_date'  => $paymentDateFormatted,
                 'loan_no'       => $loanNo,
+                'remaining_balance' => $formattedRemainingBalance,
                 'company_name'  => $companyName,
                 'company_phone' => $companyPhone ?? '',
+                'branch_name'   => $branchName,
             ];
             $smsMessage = SmsHelper::resolveTemplate('loan_repayment', $templateVars);
             if ($smsMessage === null) {
-                $smsMessage = "Habari! {$customerName}, Tumepokea marejesho ya Tsh {$formattedAmount} tarehe {$paymentDateFormatted} kutoka kwenye mkopo namba {$loanNo}. Asante. Ujumbe umetoka {$companyName}";
+                $smsMessage = "Ndugu {$customerName} rejesho lako la Tsh. {$formattedAmount}/= limepokelewa {$companyName} na jumla ya deni lililobaki ni Tsh. {$formattedRemainingBalance} .";
                 if (!empty($companyPhone)) {
-                    $smsMessage .= " kwa mawasiliano tupigie {$companyPhone}";
+                    $smsMessage .= " Piga {$companyPhone}-{$companyName}";
+                }
+                if (!empty($branchName)) {
+                    $smsMessage .= " - {$branchName}";
                 }
             }
 
